@@ -1,6 +1,6 @@
 # ============================================================================
 # COMPLETE CREWAI DATA ANALYSIS WORKFLOW
-# Multi-Agent Sequential Pipeline for Gemini (Rate-Limited + Token-Optimized)
+# Multi-Agent Sequential Pipeline for Gemini (Token-Optimized)
 # ============================================================================
 
 import os
@@ -28,7 +28,6 @@ from pydantic import Field
 # LLM configuration for Gemini
 import google.generativeai as genai
 
-
 # ============================================================================
 # PART 1: CUSTOM TOOLS
 # ============================================================================
@@ -36,7 +35,7 @@ import google.generativeai as genai
 class PythonCodeExecutorTool(BaseTool):
     """
     Safely executes Python code in isolated subprocess with timeout.
-    
+
     Returns structured output:
     - code: The executed code
     - stdout: Output from code
@@ -45,7 +44,7 @@ class PythonCodeExecutorTool(BaseTool):
     - execution_time_ms: How long it took
     - charts: List of saved chart file paths
     """
-    
+
     name: str = "python_code_executor"
     description: str = (
         "Executes Python code safely and returns results. "
@@ -53,7 +52,7 @@ class PythonCodeExecutorTool(BaseTool):
         "Always import libraries inside the code. "
         "Return results as JSON for integration with other agents."
     )
-    
+
     timeout_seconds: int = Field(default=30)
     output_dir: str = Field(default="./execution_outputs")
     execution_state: dict = Field(default_factory=dict)
@@ -62,10 +61,10 @@ class PythonCodeExecutorTool(BaseTool):
         super().__init__(**data)
         Path(self.output_dir).mkdir(exist_ok=True)
         self.execution_state = {}
-    
+
     def _run(self, code: str) -> str:
         """Execute Python code and return results as JSON."""
-        
+
         execution_id = int(time.time() * 1000)
         result = {
             "execution_id": execution_id,
@@ -77,15 +76,15 @@ class PythonCodeExecutorTool(BaseTool):
             "charts": [],
             "error": None
         }
-        
+
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 wrapped_code = self._wrap_code(code, temp_dir, execution_id)
                 code_file = Path(temp_dir) / "exec_code.py"
                 code_file.write_text(wrapped_code)
-                
+
                 start_time = time.time()
-                
+
                 proc = subprocess.run(
                     ["python", str(code_file)],
                     capture_output=True,
@@ -98,13 +97,13 @@ class PythonCodeExecutorTool(BaseTool):
                         "PYTHONDONTWRITEBYTECODE": "1"
                     }
                 )
-                
+
                 elapsed_ms = (time.time() - start_time) * 1000
-                
+
                 result["stdout"] = proc.stdout
                 result["stderr"] = proc.stderr
                 result["execution_time_ms"] = elapsed_ms
-                
+
                 if proc.returncode == 0:
                     result["success"] = True
                     result["charts"] = self._collect_charts(temp_dir)
@@ -115,17 +114,16 @@ class PythonCodeExecutorTool(BaseTool):
                 else:
                     error_msg = proc.stderr if proc.stderr else f"Exit code: {proc.returncode}"
                     result["error"] = error_msg
-                    
+
         except subprocess.TimeoutExpired:
             result["error"] = f"Execution timeout after {self.timeout_seconds}s"
         except Exception as e:
             result["error"] = f"Execution failed: {str(e)}"
-        
+
         return json.dumps(result)
-    
+
     def _wrap_code(self, code: str, temp_dir: str, exec_id: int) -> str:
         """Wrap code with safety and output capture."""
-        # Make path safe on Windows by using forward slashes
         temp_dir_safe = temp_dir.replace('\\', '/')
 
         return f'''
@@ -133,19 +131,16 @@ import sys
 import warnings
 warnings.filterwarnings("ignore")
 
-# Setup matplotlib for non-interactive backend
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Global charts list
 _CHARTS = []
 
 # ===== USER CODE STARTS =====
 {code}
 # ===== USER CODE ENDS =====
 
-# Save all matplotlib figures
 for fig_num in plt.get_fignums():
     fig = plt.figure(fig_num)
     chart_path = "{temp_dir_safe}/chart_{exec_id}_{{fig_num}}.png"
@@ -154,9 +149,9 @@ for fig_num in plt.get_fignums():
     plt.close(fig)
 
 if _CHARTS:
-    print(f"\\n__CHARTS_GENERATED__: {{_CHARTS}}")
+    print("\\n__CHARTS_GENERATED__:", _CHARTS)
 '''
-    
+
     def _collect_charts(self, temp_dir: str) -> List[str]:
         """Collect and move generated charts to output directory."""
         charts = []
@@ -169,257 +164,269 @@ if _CHARTS:
                 print(f"Warning: Could not save chart {png_file}: {e}")
         return charts
 
+# ============================================================================
+# PART 2: AGENT DEFINITIONS (TOKEN-OPTIMIZED CONFIG)
+# ============================================================================
 
-# ============================================================================
-# PART 2: AGENT DEFINITIONS
-# ============================================================================
+def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
+    """
+    Create a token-capped Gemini LLM instance.
+    thinking_budget=0 disables expensive 'thinking' tokens for cheap calls.
+    """
+    from crewai import LLM
+
+    generation_config = {
+        "max_output_tokens": max_output_tokens,
+    }
+
+    if thinking_budget > 0:
+        generation_config["thinking"] = {"budget_tokens": thinking_budget}
+
+    return LLM(
+        model="gemini-2.5-flash",
+        api_key=os.getenv("GEMINI_API_KEY"),
+        config=generation_config,
+    )
 
 def create_agents(executor_tool: PythonCodeExecutorTool) -> Dict[str, Agent]:
     """Create specialized agents for data analysis pipeline."""
-    
-    from crewai import LLM
-    
-    gemini_llm = LLM(
-        model="gemini-2.5-flash",
-        api_key=os.getenv("GEMINI_API_KEY")
-    )
-    
+
+    llm_short = _make_gemini_llm(max_output_tokens=350, thinking_budget=0)
+    llm_medium = _make_gemini_llm(max_output_tokens=800, thinking_budget=512)
+    llm_long = _make_gemini_llm(max_output_tokens=1600, thinking_budget=1024)
+
     agents = {
         "library_import": Agent(
             role="Python Environment Setup Specialist",
-            goal="Set up necessary libraries for data analysis",
+            goal="Quickly prepare core data science libraries and confirm the dataset loads.",
             backstory=(
-                "You import and prepare Python data science libraries "
-                "and confirm the environment and dataset can be loaded."
+                "You focus on minimal, correct import and load code. "
+                "You output compact Python only, with tiny confirmations."
             ),
-            llm=gemini_llm,
+            llm=llm_short,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "data_loading": Agent(
             role="Data Loading Specialist",
-            goal="Load and validate the dataset",
+            goal="Load the dataset and summarise its basic structure.",
             backstory=(
-                "You load the dataset and provide a concise structural summary."
+                "You only report shape, column names, dtypes, and missing counts. "
+                "You avoid long tables or prose."
             ),
-            llm=gemini_llm,
+            llm=llm_short,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "data_inspection": Agent(
             role="Data Inspection Analyst",
-            goal="Inspect data structure and quality",
+            goal="Inspect schema and quality issues in a compact way.",
             backstory=(
-                "You examine columns, types, duplicates, and basic quality issues."
+                "You highlight duplicates, ranges, and obvious issues with short bullet points."
             ),
-            llm=gemini_llm,
+            llm=llm_medium,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "data_cleaning": Agent(
             role="Data Cleaning Specialist",
-            goal="Clean and prepare data for analysis",
+            goal="Apply simple, transparent cleaning steps and report new shape.",
             backstory=(
-                "You handle missing values, duplicates, outliers, and type fixes, "
-                "and report operations concisely."
+                "You perform only essential cleaning (missing values, duplicates, outliers, dtypes) "
+                "and summarise actions briefly."
             ),
-            llm=gemini_llm,
+            llm=llm_medium,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "data_transformation": Agent(
             role="Feature Engineering Expert",
-            goal="Transform and derive meaningful features",
+            goal="Create a small set of clear, useful feature transformations.",
             backstory=(
-                "You perform feature engineering and transformations needed for analysis."
+                "You apply light scaling/encoding and a few derived features, then list them quickly."
             ),
-            llm=gemini_llm,
+            llm=llm_medium,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "eda_analyst": Agent(
             role="Exploratory Data Analysis Specialist",
-            goal="Perform compact EDA",
+            goal="Provide concise EDA with only key statistics and patterns.",
             backstory=(
-                "You compute key descriptive statistics and highlight main patterns "
-                "in a concise, structured way."
+                "You avoid long narratives and focus on the 2–3 most important findings."
             ),
-            llm=gemini_llm,
+            llm=llm_medium,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "visualization_expert": Agent(
             role="Data Visualization Specialist",
-            goal="Create informative visualizations",
+            goal="Generate a few core charts and list their file paths.",
             backstory=(
-                "You create a small set of core charts and print only file paths and short labels."
+                "You create only essential plots and output chart_name → file_path pairs."
             ),
-            llm=gemini_llm,
+            llm=llm_short,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "statistical_analyst": Agent(
             role="Statistical Analysis Expert",
-            goal="Perform key statistical tests",
+            goal="Run a few key tests and summarise results briefly.",
             backstory=(
-                "You run a few relevant statistical tests and provide brief results."
+                "You report test name, variables, p-value, and a one-line interpretation only."
             ),
-            llm=gemini_llm,
+            llm=llm_medium,
             tools=[executor_tool],
-            verbose=True
+            verbose=True,
         ),
-        
         "report_generator": Agent(
             role="Technical Report Writer",
-            goal="Generate concise markdown report",
+            goal="Produce a compact markdown report that stitches all steps together.",
             backstory=(
-                "You synthesize all previous outputs into a short, structured markdown report."
+                "You summarise previous outputs into a short, structured markdown report, "
+                "avoiding repetition and large tables."
             ),
-            llm=gemini_llm,
+            llm=llm_long,
             tools=[],
-            verbose=True
-        )
+            verbose=True,
+        ),
     }
-    
+
     return agents
 
-
 # ============================================================================
-# PART 3: TASK DEFINITIONS (TOKEN-OPTIMIZED)
+# PART 3: TASK DEFINITIONS (TIGHTER TOKEN BUDGETS)
 # ============================================================================
 
 def create_tasks(agents: Dict[str, Agent], dataset_path: str) -> Dict[str, Task]:
     """Create sequential analysis tasks."""
-    
+
     tasks = {
         "library_import": Task(
             description=(
                 f"Write Python code to:\n"
                 f"- Import pandas, numpy, matplotlib, seaborn, scipy, scikit-learn.\n"
                 f"- Set matplotlib to non-interactive backend.\n"
-                f"- Load dataset from: {dataset_path} into a DataFrame named df.\n"
-                f"- Print only a short confirmation message and versions.\n"
-                f"Keep text output under ~200 tokens."
+                f"- Load dataset from: '{dataset_path}' into df using pd.read_csv('{dataset_path}').\n"
+                f"- Print a one-line confirmation and library versions.\n"
+                f"Output: code only (no explanation) plus minimal print statements.\n"
+                f"IMPORTANT: Do NOT hard-code any different file name or path."
             ),
-            expected_output="Short confirmation and library versions.",
+            expected_output="Short Python snippet that imports libraries and loads df.",
             agent=agents["library_import"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "data_loading": Task(
             description=(
-                f"Use Python to load the dataset from {dataset_path} (if not already loaded).\n"
+                f"Use Python to ensure the dataset at '{dataset_path}' is loaded in df.\n"
+                f"Always load using: df = pd.read_csv('{dataset_path}').\n"
                 f"Print ONLY:\n"
                 f"- Shape (rows, columns).\n"
                 f"- Column names with dtypes.\n"
                 f"- Missing value count per column.\n"
-                f"- First 3 rows as a compact table.\n"
-                f"Keep output under ~400 tokens."
+                f"- Head(3) as a compact table.\n"
+                f"Keep text highly compact; avoid extra commentary."
             ),
-            expected_output="Concise loading summary.",
+            expected_output="Concise loading summary with shape, dtypes, missing values and 3-row preview.",
             agent=agents["data_loading"],
             context=[],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "data_inspection": Task(
             description=(
-                "Inspect the loaded dataset and print a compact summary:\n"
-                "- List of columns with dtype and number of unique values.\n"
-                "- Number of duplicate rows.\n"
-                "- Basic range (min, max) for numeric columns.\n"
-                "- Brief notes on obvious quality issues.\n"
-                "Avoid printing full value lists; keep output under ~500 tokens."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then inspect it and print a small summary:\n"
+                f"- Columns with dtype and number of unique values.\n"
+                f"- Count of duplicate rows.\n"
+                f"- Min and max for numeric columns.\n"
+                f"- 2–3 bullet points on obvious quality issues.\n"
+                f"Do not print full distributions or long tables."
             ),
-            expected_output="Compact inspection report.",
+            expected_output="Short inspection report with bullets.",
             agent=agents["data_inspection"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "data_cleaning": Task(
             description=(
-                "Clean the dataset using Python code:\n"
-                "1. Handle missing values (drop or fill based on simple strategy).\n"
-                "2. Remove exact duplicate rows.\n"
-                "3. Identify and optionally cap/extreme outliers.\n"
-                "4. Fix obvious dtype issues.\n"
-                "5. Drop rows with >50% missing values.\n"
-                "Print a SHORT summary: operations performed and new shape."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then clean it using Python code:\n"
+                f"1. Handle missing values with simple, documented strategy.\n"
+                f"2. Drop exact duplicate rows.\n"
+                f"3. Optionally cap extreme numeric outliers.\n"
+                f"4. Fix obvious dtype issues.\n"
+                f"5. Drop rows with >50% missing.\n"
+                f"Print a brief summary: operations performed and new shape."
             ),
-            expected_output="Short cleaning report and new shape.",
+            expected_output="Short cleaning report listing steps and resulting shape.",
             agent=agents["data_cleaning"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "data_transformation": Task(
             description=(
-                "Transform the cleaned dataset:\n"
-                "1. Apply basic scaling to numeric features if needed.\n"
-                "2. Encode categorical variables with simple encodings.\n"
-                "3. Create 1–3 useful derived features.\n"
-                "Print only a summary of transformations and final dtypes.\n"
-                "Avoid large tables; keep under ~400 tokens."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then transform it:\n"
+                f"1. Scale or normalise key numeric features if helpful.\n"
+                f"2. Encode categorical variables with simple encodings.\n"
+                f"3. Create 1–3 meaningful derived features.\n"
+                f"Print only a compact list of transformations and final dtypes."
             ),
-            expected_output="Transformation summary.",
+            expected_output="Transformation summary with feature list and dtypes.",
             agent=agents["data_transformation"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "eda_analysis": Task(
             description=(
-                "Perform concise EDA and print a structured summary:\n"
-                "- Key descriptive stats (mean, std, min, max) for main numeric columns.\n"
-                "- 2–3 notable correlations or relationships.\n"
-                "- 2–3 main patterns or anomalies.\n"
-                "Return this as markdown bullet points or a small JSON-like block, "
-                "not exceeding ~500 tokens."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then perform concise EDA and print a structured summary:\n"
+                f"- Descriptive stats (mean, std, min, max) for key numeric columns.\n"
+                f"- 2–3 notable correlations or relationships.\n"
+                f"- 2–3 main patterns or anomalies.\n"
+                f"Return as markdown bullets or a small JSON-style block; keep it compact."
             ),
-            expected_output="Compact EDA findings.",
+            expected_output="Compact EDA findings in bullet form.",
             agent=agents["eda_analyst"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "visualizations": Task(
             description=(
-                "Create a small set of core visualizations using matplotlib/seaborn:\n"
-                "1. 1–2 distribution plots for key numeric variables.\n"
-                "2. 1 correlation heatmap (if applicable).\n"
-                "3. 1 box plot for outlier visualization.\n"
-                "Save all figures with plt.savefig() and close them.\n"
-                "Print ONLY a short list: chart_name -> file_path."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then create a few core visualisations using matplotlib/seaborn:\n"
+                f"1. 1–2 distribution plots for important numeric variables.\n"
+                f"2. 1 correlation heatmap (if applicable).\n"
+                f"3. 1 box plot for outliers.\n"
+                f"Save all figures with plt.savefig() and close them.\n"
+                f"Print ONLY a short list: chart_name -> file_path."
             ),
-            expected_output="List of generated chart file paths.",
+            expected_output="List of generated chart file paths with short labels.",
             agent=agents["visualization_expert"],
-            async_execution=False
+            async_execution=False,
         ),
-        
+
         "statistical_tests": Task(
             description=(
-                "Perform a few basic statistical analyses:\n"
-                "- 1 normality test on a main numeric column.\n"
-                "- 1 correlation significance test between two key numeric columns.\n"
-                "- If a suitable categorical variable exists, 1 group comparison test.\n"
-                "Print a SHORT markdown section with:\n"
-                "- Test name.\n"
-                "- Variables.\n"
-                "- p-value.\n"
-                "- 1-sentence interpretation.\n"
-                "Keep under ~400 tokens."
+                f"First, load the dataset: df = pd.read_csv('{dataset_path}')\n"
+                f"Then run a few basic statistical analyses:\n"
+                f"- One normality test on a main numeric column.\n"
+                f"- One correlation significance test between two key numeric columns.\n"
+                f"- If possible, one simple group comparison using a categorical variable.\n"
+                f"Print a SHORT markdown section with:\n"
+                f"- Test name\n"
+                f"- Variables\n"
+                f"- p-value\n"
+                f"- 1-sentence interpretation."
             ),
             expected_output="Concise statistical test results.",
             agent=agents["statistical_analyst"],
-            async_execution=False
-        )
+            async_execution=False,
+        ),
     }
-    
-    # Context dependencies
+
     if "data_loading" in tasks:
         tasks["data_loading"].context = [tasks["library_import"]]
     if "data_inspection" in tasks:
@@ -434,169 +441,161 @@ def create_tasks(agents: Dict[str, Agent], dataset_path: str) -> Dict[str, Task]
         tasks["visualizations"].context = [tasks["eda_analysis"]]
     if "statistical_tests" in tasks:
         tasks["statistical_tests"].context = [tasks["visualizations"]]
-    
+
     return tasks
 
-
 # ============================================================================
-# PART 4: WORKFLOW ORCHESTRATION (1 RPS + MARKDOWN REPORT)
+# PART 4: WORKFLOW ORCHESTRATION
 # ============================================================================
 
 class DataAnalysisWorkflow:
     """Main workflow controller for sequential data analysis pipeline."""
-    
+
     def __init__(self, dataset_path: str, output_dir: str = "./analysis_results"):
-        self.dataset_path = dataset_path
-        self.output_dir = Path(output_dir)
+        # Convert to absolute paths so subprocess can find files from any working directory
+        self.dataset_path = str(Path(dataset_path).resolve())
+        self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(exist_ok=True)
-        
+
         self.executor = PythonCodeExecutorTool(output_dir=str(self.output_dir / "charts"))
         self.agents = create_agents(self.executor)
-        self.tasks = create_tasks(self.agents, dataset_path)
-        
+        self.tasks = create_tasks(self.agents, self.dataset_path)
+
         self.results = {}
         self.charts = []
-        
+
     def run_sequential_pipeline(self) -> Dict[str, Any]:
-        """Run the sequential data analysis pipeline with rate limiting (1 RPS)."""
-        
+        """Run the sequential data analysis pipeline."""
+
         print(f"\n{'='*70}")
         print("STARTING SEQUENTIAL DATA ANALYSIS PIPELINE")
         print(f"Dataset: {self.dataset_path}")
         print(f"Output Directory: {self.output_dir}")
-        print("Rate Limiting: ~1 Gemini request per second")
+        print("LLM: Gemini 2.5 Flash (token-optimized config)")
         print(f"{'='*70}\n")
-        
+
         # ----- PHASE 1: PREPARATION -----
         print("\n" + "="*70)
         print("PHASE 1: SEQUENTIAL DATA PREPARATION PIPELINE")
         print("="*70)
-        
+
         prep_agents = [
             self.agents["library_import"],
             self.agents["data_loading"],
             self.agents["data_inspection"],
             self.agents["data_cleaning"],
-            self.agents["data_transformation"]
+            self.agents["data_transformation"],
         ]
-        
+
         prep_tasks = [
             self.tasks["library_import"],
             self.tasks["data_loading"],
             self.tasks["data_inspection"],
             self.tasks["data_cleaning"],
-            self.tasks["data_transformation"]
+            self.tasks["data_transformation"],
         ]
-        
+
         try:
             print("\n[PHASE 1] Starting preparation pipeline...")
             for i, (agent, task) in enumerate(zip(prep_agents, prep_tasks), 1):
                 print(f"\n[PHASE 1 - Task {i}/5] {agent.role}")
                 print(f"[TIME] {datetime.now().strftime('%H:%M:%S')} - Starting task...")
-                
+
                 single_crew = Crew(
                     agents=[agent],
                     tasks=[task],
                     process=Process.sequential,
-                    verbose=True
+                    verbose=True,
                 )
-                
+
                 task_result = single_crew.kickoff(inputs={"dataset_path": self.dataset_path})
                 self.results[f"task_{i}"] = str(task_result)
-                
+
                 print(f"[PHASE 1 - Task {i}/5] ✓ Completed")
-                
-                if i < len(prep_tasks):
-                    print("[RATE LIMITING] Waiting 15 seconds before next task...")
-                    time.sleep(15)
-            
+
             self.results["preparation"] = "\n---\n".join(
                 self.results.get(f"task_{i}", "") for i in range(1, len(prep_tasks) + 1)
             )
             print("\n[PHASE 1] ✓ Preparation phase completed")
-        
+
         except Exception as e:
             print(f"\n[PHASE 1] ✗ Error in preparation phase: {e}")
             self.results["preparation"] = f"Error: {str(e)}"
             return self.results
-        
-        print("\n[RATE LIMITING] Waiting 15 seconds between phases...")
-        time.sleep(15)
-        
+
+        print("\n[RATE LIMITING] Waiting 10 seconds between phases...")
+        time.sleep(10)
+
         # ----- PHASE 2: ANALYSIS -----
         print("\n" + "="*70)
         print("PHASE 2: SEQUENTIAL ANALYSIS GROUP")
         print("="*70)
-        
+
         analysis_agents = [
             self.agents["eda_analyst"],
             self.agents["visualization_expert"],
-            self.agents["statistical_analyst"]
+            self.agents["statistical_analyst"],
         ]
-        
+
         analysis_tasks = [
             self.tasks["eda_analysis"],
             self.tasks["visualizations"],
-            self.tasks["statistical_tests"]
+            self.tasks["statistical_tests"],
         ]
-        
+
         try:
             print("\n[PHASE 2] Starting analysis phase...")
             for i, (agent, task) in enumerate(zip(analysis_agents, analysis_tasks), 1):
                 print(f"\n[PHASE 2 - Task {i}/3] {agent.role}")
                 print(f"[TIME] {datetime.now().strftime('%H:%M:%S')} - Starting task...")
-                
+
                 single_crew = Crew(
                     agents=[agent],
                     tasks=[task],
                     process=Process.sequential,
-                    verbose=True
+                    verbose=True,
                 )
-                
+
                 task_result = single_crew.kickoff(inputs={"context": self.results["preparation"]})
                 self.results[f"analysis_task_{i}"] = str(task_result)
-                
+
                 print(f"[PHASE 2 - Task {i}/3] ✓ Completed")
-                
-                if i < len(analysis_tasks):
-                    print("[RATE LIMITING] Waiting 15 seconds before next task...")
-                    time.sleep(15)
-            
+
             self.results["analysis"] = "\n---\n".join(
                 self.results.get(f"analysis_task_{i}", "") for i in range(1, len(analysis_tasks) + 1)
             )
             print("\n[PHASE 2] ✓ Analysis phase completed")
-        
+
         except Exception as e:
             print(f"\n[PHASE 2] ✗ Error in analysis phase: {e}")
             self.results["analysis"] = f"Error: {str(e)}"
-        
-        print("\n[RATE LIMITING] Waiting 10 seconds before final report...")
-        time.sleep(10)
-        
+
+        print("\n[RATE LIMITING] Waiting 8 seconds before final report...")
+        time.sleep(8)
+
         # ----- PHASE 3: REPORT GENERATION (MARKDOWN) -----
         print("\n" + "="*70)
         print("PHASE 3: REPORT GENERATION (MARKDOWN)")
         print("="*70)
-        
+
         report_task = Task(
             description=(
-                "Using the following analysis context, write a concise markdown report.\n\n"
+                "Using the analysis context below, write a concise markdown report.\n\n"
                 "=== PREPARATION PHASE ===\n"
                 f"{self.results['preparation']}\n\n"
                 "=== ANALYSIS PHASE ===\n"
                 f"{self.results.get('analysis', 'N/A')}\n\n"
                 "Requirements:\n"
-                "- Output MUST be valid markdown.\n"
+                "- Output valid markdown only.\n"
                 "- Max length about 800–1000 words.\n"
-                "- Use sections: # Executive Summary, ## Data, ## Cleaning, "
+                "- Sections: # Executive Summary, ## Data, ## Cleaning, "
                 "## EDA, ## Statistics, ## Key Insights.\n"
-                "- Use short bullet points, avoid repeating large tables verbatim."
+                "- Use short bullet points and avoid repeating large tables."
             ),
             expected_output="Concise markdown report (<= ~1000 words).",
-            agent=self.agents["report_generator"]
+            agent=self.agents["report_generator"],
         )
-        
+
         try:
             print("\n[PHASE 3] Starting report generation...")
             print(f"[TIME] {datetime.now().strftime('%H:%M:%S')} - Starting report task...")
@@ -606,89 +605,82 @@ class DataAnalysisWorkflow:
         except Exception as e:
             print(f"\n[PHASE 3] ✗ Error in report generation: {e}")
             self.results["report"] = f"Error: {str(e)}"
-        
+
         self.charts = list((self.output_dir / "charts").glob("*.png"))
-        
+
         return self.results
-    
+
     def generate_markdown_report(self) -> str:
         """Save the LLM-generated markdown report to a .md file."""
         report_md = self.results.get("report", "")
         if not report_md:
             report_md = "# Analysis Report\n\n_No report content generated._"
-        
+
         report_path = self.output_dir / "analysis_report.md"
         report_path.write_text(report_md, encoding="utf-8")
-        
+
         print(f"\n{'='*70}")
         print("✓ MARKDOWN REPORT GENERATED")
         print(f"Location: {report_path}")
         print(f"{'='*70}\n")
-        
+
         return str(report_path)
-    
-    # Backward-compatible alias if run.py still calls generate_html_report
+
     def generate_html_report(self) -> str:
         """Compatibility wrapper: generates markdown instead of HTML."""
         return self.generate_markdown_report()
-    
+
     def _embed_charts(self) -> str:
         """No-op placeholder kept for compatibility (not used in markdown)."""
         return ""
 
-
 # ============================================================================
-# PART 5: MAIN EXECUTION
+# PART 5: MAIN EXECUTION (STANDALONE TEST ONLY)
 # ============================================================================
-
-def main():
-    """Main entry point."""
-    
-    dataset_path = "sample_data.csv"
-    
-    if not Path(dataset_path).exists():
-        print(f"Creating sample dataset: {dataset_path}")
-        create_sample_dataset(dataset_path)
-    
-    workflow = DataAnalysisWorkflow(
-        dataset_path=dataset_path,
-        output_dir="./analysis_results"
-    )
-    
-    results = workflow.run_sequential_pipeline()
-    
-    report_path = workflow.generate_markdown_report()
-    
-    print(f"\n{'='*70}")
-    print("WORKFLOW COMPLETE")
-    print(f"{'='*70}")
-    print(f"Report saved to: {report_path}")
-    print(f"Charts saved to: {workflow.output_dir / 'charts'}")
-    
-    return report_path
-
 
 def create_sample_dataset(path: str):
     """Create a sample dataset for testing."""
-    
+
     np.random.seed(42)
     n_samples = 200
-    
+
     data = {
-        'Age': np.random.randint(18, 80, n_samples),
-        'Income': np.random.normal(50000, 20000, n_samples).astype(int),
-        'Experience_Years': np.random.randint(0, 40, n_samples),
-        'Score': np.random.normal(75, 15, n_samples),
-        'Department': np.random.choice(['Sales', 'Engineering', 'Marketing', 'HR'], n_samples),
-        'Satisfaction': np.random.choice([1, 2, 3, 4, 5], n_samples)
+        "Age": np.random.randint(18, 80, n_samples),
+        "Income": np.random.normal(50000, 20000, n_samples).astype(int),
+        "Experience_Years": np.random.randint(0, 40, n_samples),
+        "Score": np.random.normal(75, 15, n_samples),
+        "Department": np.random.choice(["Sales", "Engineering", "Marketing", "HR"], n_samples),
+        "Satisfaction": np.random.choice([1, 2, 3, 4, 5], n_samples),
     }
-    
+
     df = pd.DataFrame(data)
     df.to_csv(path, index=False)
     print(f"✓ Sample dataset created: {path}")
     print(f"  Shape: {df.shape}")
     print(f"  Columns: {list(df.columns)}")
 
+def main():
+    """Standalone test entry point (not used when imported from run.py)."""
+    dataset_path = "sample_data.csv"
+    if not Path(dataset_path).exists():
+        print(f"Creating sample dataset: {dataset_path}")
+        create_sample_dataset(dataset_path)
+
+    workflow = DataAnalysisWorkflow(
+        dataset_path=dataset_path,
+        output_dir="./analysis_results",
+    )
+
+    results = workflow.run_sequential_pipeline()
+    report_path = workflow.generate_markdown_report()
+
+    print(f"\n{'='*70}")
+    print("WORKFLOW COMPLETE")
+    print(f"{'='*70}")
+    print(f"Report saved to: {report_path}")
+    print(f"Charts saved to: {workflow.output_dir / 'charts'}")
+
+    return report_path
 
 if __name__ == "__main__":
     main()
