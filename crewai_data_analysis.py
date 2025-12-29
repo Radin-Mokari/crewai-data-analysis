@@ -133,7 +133,7 @@ validation_report = {{}}
             result["success"] = True
         except Exception as e:
             result["error"] = repr(e)
-            print("EXECUTOR ERROR:", repr(e))  # ← add this line
+            print("EXECUTOR ERROR:", repr(e))
 
         result["stdout"] = stdout_buffer.getvalue()
         stdout_buffer.close()
@@ -414,10 +414,16 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
         ),
         "statistical_tests": Task(
             description=(
-                "Run simple statistical tests on df_features or df_clean (whichever exists):\n"
-                "- One normality test on a main numeric column.\n"
-                "- One correlation significance test between two key numeric columns.\n"
-                "- If possible, one simple group comparison using a categorical variable.\n"
+                "Use ONLY the DataFrames already in memory in the shared session.\n"
+                "- Prefer df_features; if it is None, use df_clean; if that is None, use df_raw.\n"
+                "- Do NOT call pd.read_csv or access any file paths.\n"
+                "- Before using a column name, check that it exists in df.columns; if not, skip that test "
+                "and print a short note.\n"
+                "- Run one normality test on a numeric column (for example 'Price' if it exists).\n"
+                "- Run one correlation significance test between two numeric columns that exist "
+                "(for example 'Price' and 'Engine size' if both are present).\n"
+                "- Run one simple group comparison using a categorical variable that exists "
+                "(for example 'Fuel_Type' if present).\n"
                 "Print a SHORT markdown-style section with:\n"
                 "- Test name\n"
                 "- Variables\n"

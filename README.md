@@ -13,7 +13,7 @@ A multi-agent sequential pipeline for automated data analysis using CrewAI and G
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/crewai-data-analysis.git
+   git clone https://github.com/...
    cd crewai-data-analysis
    ```
 
