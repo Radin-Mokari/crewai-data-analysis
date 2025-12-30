@@ -58,6 +58,23 @@ class PythonSessionTool(BaseTool):
     # ------------------------------------------------------------------ #
     def _init_base_session(self):
         """Initialize the shared session globals once."""
+        # Store output_dir so agents can use it for saving charts
+        chart_output_dir = Path(self.output_dir).resolve()
+        chart_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a wrapped savefig that always saves to the correct directory
+        original_savefig = plt.savefig
+        def wrapped_savefig(fname, *args, **kwargs):
+            """Redirect all savefig calls to the chart output directory."""
+            fname_path = Path(fname)
+            # If it's just a filename (no directory), save to chart_output_dir
+            if fname_path.parent == Path('.') or not fname_path.is_absolute():
+                fname = str(chart_output_dir / fname_path.name)
+            return original_savefig(fname, *args, **kwargs)
+        
+        # Replace plt.savefig with our wrapped version
+        plt.savefig = wrapped_savefig
+        
         base_globals = {
             "__name__": "__session__",
             "pd": pd,
@@ -65,6 +82,8 @@ class PythonSessionTool(BaseTool):
             "plt": plt,
             "sns": sns,
             "matplotlib": matplotlib,
+            "CHART_OUTPUT_DIR": str(chart_output_dir),
+            "Path": Path,
         }
         self.session_globals = base_globals
 
@@ -74,15 +93,34 @@ class PythonSessionTool(BaseTool):
 
         - Loads CSV into df_raw
         - Sets df_clean and df_features to None initially
+        - Injects column metadata for dynamic column awareness (Core Mode)
         """
         code = f"""
 import pandas as _pd
+import numpy as _np
 
 dataset_path = r\"\"\"{dataset_path}\"\"\"
 df_raw = _pd.read_csv(dataset_path)
 df_clean = None
 df_features = None
 validation_report = {{}}
+
+# === CORE MODE METADATA ===
+# These variables provide dynamic column awareness for all agents
+DATASET_COLUMNS = list(df_raw.columns)
+NUMERIC_COLUMNS = df_raw.select_dtypes(include=[_np.number]).columns.tolist()
+CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category']).columns.tolist()
+BOOLEAN_COLUMNS = df_raw.select_dtypes(include=['bool']).columns.tolist()
+DATASET_SHAPE = df_raw.shape
+DATASET_PATH = dataset_path
+
+# Print metadata summary for agents to reference
+print("=== CORE MODE: Dataset Metadata ===")
+print(f"Shape: {{DATASET_SHAPE[0]}} rows x {{DATASET_SHAPE[1]}} columns")
+print(f"All columns: {{DATASET_COLUMNS}}")
+print(f"Numeric columns ({{len(NUMERIC_COLUMNS)}}): {{NUMERIC_COLUMNS}}")
+print(f"Categorical columns ({{len(CATEGORICAL_COLUMNS)}}): {{CATEGORICAL_COLUMNS}}")
+print("===================================")
 """
         exec(code, self.session_globals)
 
@@ -172,6 +210,21 @@ def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
     )
 
 
+def _make_summarizer_llm():
+    """Create a free DeepSeek R1 LLM for context summarization via OpenRouter."""
+    from crewai import LLM
+
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return None  # Fallback to rule-based compression
+
+    return LLM(
+        model="openrouter/deepseek/deepseek-r1:free",  # openrouter/ prefix for CrewAI routing
+        api_key=api_key,
+        config={"max_output_tokens": 500}
+    )
+
+
 # ============================================================================
 # PART 3: AGENT DEFINITIONS (STATE-AWARE)
 # ============================================================================
@@ -181,13 +234,24 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
     llm_medium = _make_gemini_llm(max_output_tokens=640, thinking_budget=256)
     llm_long = _make_gemini_llm(max_output_tokens=1200, thinking_budget=512)
 
+    # === CORE MODE INSTRUCTION (shared by all data prep agents) ===
+    core_mode_instruction = (
+        "You operate in CORE MODE within a persistent Python kernel. "
+        "CRITICAL RULES: "
+        "1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. "
+        "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
+        "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
+        "4) Output concise code, no conversational text."
+    )
+
     agents = {
         "library_import": Agent(
             role="Python Environment Setup Specialist",
-            goal="Prepare the Python environment and confirm df_raw is loaded and accessible.",
+            goal="Verify the Python environment and confirm df_raw and metadata variables are accessible.",
             backstory=(
-                "You work with a persistent in-memory Python session. "
-                "You never reload the CSV file. You just verify df_raw and environment."
+                f"{core_mode_instruction} "
+                "Your job: Verify that df_raw exists and print DATASET_COLUMNS to confirm metadata is loaded. "
+                "Do NOT reload any data. Just confirm the environment is ready."
             ),
             llm=llm_short,
             tools=[executor_tool],
@@ -195,10 +259,11 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "data_loading": Agent(
             role="Data Structure Summariser",
-            goal="Summarise the structure of df_raw already in memory.",
+            goal="Summarise df_raw structure using pre-loaded metadata variables.",
             backstory=(
-                "You assume df_raw already exists in the shared session. "
-                "You do not call read_csv. You only inspect df_raw."
+                f"{core_mode_instruction} "
+                "Your job: Print df_raw.shape, use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to describe the schema. "
+                "Show df_raw.head(3) and df_raw.dtypes. Do NOT call read_csv."
             ),
             llm=llm_short,
             tools=[executor_tool],
@@ -206,10 +271,12 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "data_inspection": Agent(
             role="Data Inspection Analyst",
-            goal="Inspect df_raw and highlight schema and quality issues.",
+            goal="Inspect df_raw for quality issues using dynamic column detection.",
             backstory=(
-                "You use df_raw from the shared session and never reload the dataset. "
-                "You emit concise bullet-point diagnostics."
+                f"{core_mode_instruction} "
+                "Your job: Use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to inspect data quality. "
+                "Check missing values with df_raw[DATASET_COLUMNS].isnull().sum(). "
+                "Check duplicates with df_raw.duplicated().sum(). Output bullet-point diagnostics."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -217,10 +284,12 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "data_validation": Agent(
             role="Data Validation Specialist",
-            goal="Run core data validation rules on df_raw and store results in validation_report.",
+            goal="Run validation rules on df_raw using dynamic columns and store in validation_report.",
             backstory=(
-                "You implement simple, explicit validation rules on df_raw and record them "
-                "in a validation_report dict so later tasks can check them."
+                f"{core_mode_instruction} "
+                "Your job: Validate df_raw dynamically - iterate over NUMERIC_COLUMNS for range checks, "
+                "CATEGORICAL_COLUMNS for cardinality checks. Store results in validation_report dict. "
+                "Do NOT hardcode column names - use the metadata variables."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -228,10 +297,12 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "data_cleaning": Agent(
             role="Data Cleaning Specialist",
-            goal="Create df_clean from df_raw using minimal, transparent cleaning steps.",
+            goal="Create df_clean from df_raw using validation_report findings.",
             backstory=(
-                "You read df_raw, create df_clean, document operations via prints, "
-                "and never reload the CSV. You respect validation_report findings."
+                f"{core_mode_instruction} "
+                "Your job: Create df_clean = df_raw.copy(), then clean based on validation_report. "
+                "Use NUMERIC_COLUMNS for numeric imputation, CATEGORICAL_COLUMNS for categorical handling. "
+                "Print each cleaning step. INSPECTOR MODE: If code fails, read traceback, fix, and retry."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -239,21 +310,34 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "data_transformation": Agent(
             role="Feature Engineering Expert",
-            goal="Create df_features from df_clean and list new features.",
+            goal="Create df_features from df_clean with derived features for ML.",
             backstory=(
-                "You assume df_clean exists, derive df_features, and keep transformations simple. "
-                "No re-loading from disk."
+                f"{core_mode_instruction} "
+                "Your job: Create df_features = df_clean.copy(). Engineer features using NUMERIC_COLUMNS "
+                "(scaling, interactions) and CATEGORICAL_COLUMNS (encoding). "
+                "Update NUMERIC_COLUMNS and CATEGORICAL_COLUMNS after transformations. "
+                "Print summary of new features created."
             ),
             llm=llm_medium,
             tools=[executor_tool],
             verbose=True,
         ),
+        # === ANALYSIS AGENTS: Codified Prompting + Inspector Pattern ===
         "eda_analysis": Agent(
             role="Exploratory Data Analysis Specialist",
-            goal="Provide concise EDA using df_features if available, else df_clean or df_raw.",
+            goal="Perform EDA using CODIFIED PROMPTING - output pseudocode plan first, then execute.",
             backstory=(
-                "You prioritise df_features, then df_clean, then df_raw, in that order. "
-                "You keep outputs short and structured."
+                "You use CODIFIED PROMPTING: Output your analysis as structured pseudocode BEFORE executing. "
+                "PLAN FORMAT:\n"
+                "```\n"
+                "def perform_eda(df):\n"
+                "    # Step 1: Select best dataframe\n"
+                "    # Step 2: Compute stats for NUMERIC_COLUMNS\n"
+                "    # Step 3: Compute correlations\n"
+                "    # Step 4: Identify patterns\n"
+                "```\n"
+                "Then execute. Use df_features if not None, else df_clean, else df_raw. "
+                "INSPECTOR MODE: If execution fails, read traceback, fix code, retry (max 3 attempts)."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -261,10 +345,19 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "visualizations": Agent(
             role="Data Visualization Specialist",
-            goal="Generate a small set of core charts from df_features/df_clean.",
+            goal="Generate charts using CODIFIED PROMPTING - plan visualizations first, then create.",
             backstory=(
-                "You use the shared session's DataFrames and save figures only via plt.savefig. "
-                "You output chart_name → file_path pairs."
+                "You use CODIFIED PROMPTING: Output your visualization plan as pseudocode FIRST.\n"
+                "PLAN FORMAT:\n"
+                "```\n"
+                "def create_visualizations(df):\n"
+                "    # Chart 1: Distribution of first numeric column\n"
+                "    # Chart 2: Correlation heatmap of NUMERIC_COLUMNS\n"
+                "    # Chart 3: Box plot for outlier detection\n"
+                "```\n"
+                "Then execute. Use NUMERIC_COLUMNS for dynamic column selection. "
+                "DO NOT call plt.savefig() - tool saves automatically. "
+                "INSPECTOR MODE: If plt errors occur, check column exists, fix, retry."
             ),
             llm=llm_short,
             tools=[executor_tool],
@@ -272,21 +365,45 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "statistical_tests": Agent(
             role="Statistical Analysis Expert",
-            goal="Run a few key tests on df_features/df_clean.",
+            goal="Run statistical tests using CODIFIED PROMPTING with dynamic column selection.",
             backstory=(
-                "You keep tests simple and use the data already in memory. "
-                "No disk I/O and no CSV reloading."
+                "You use CODIFIED PROMPTING: Output test plan as pseudocode FIRST.\n"
+                "PLAN FORMAT:\n"
+                "```\n"
+                "def run_statistical_tests(df):\n"
+                "    # Test 1: Normality test on first NUMERIC_COLUMN\n"
+                "    # Test 2: Correlation test between two NUMERIC_COLUMNS\n"
+                "    # Test 3: Group comparison if CATEGORICAL_COLUMNS exist\n"
+                "```\n"
+                "CRITICAL: Before using ANY column, verify it exists: `if col in df.columns`.\n"
+                "Use NUMERIC_COLUMNS[0], NUMERIC_COLUMNS[1] etc. - NEVER hardcode column names.\n"
+                "INSPECTOR MODE: If KeyError occurs, print df.columns, select valid column, retry."
             ),
             llm=llm_medium,
             tools=[executor_tool],
             verbose=True,
         ),
+        # === REPORT AGENT: Token Stratification ===
         "report_generator": Agent(
             role="Technical Report Writer",
-            goal="Produce a compact markdown report summarising the whole pipeline.",
+            goal="Produce a markdown report using TOKEN STRATIFICATION - extract only high-value insights.",
             backstory=(
-                "You stitch together previous step outputs into a concise markdown report. "
-                "You assume all computations are already done."
+                "You use TOKEN STRATIFICATION to filter context efficiently.\n"
+                "IGNORE (low-value tokens):\n"
+                "- Code syntax and implementation details\n"
+                "- Execution logs and tracebacks\n"
+                "- Raw dataframe outputs and intermediate steps\n"
+                "- Verbose debugging information\n\n"
+                "EXTRACT ONLY (high-value tokens):\n"
+                "- Dataset shape and column summary\n"
+                "- Data quality issues found and how they were resolved\n"
+                "- Statistical metrics: correlations, p-values, test results\n"
+                "- Visualization file paths (charts created)\n"
+                "- Key patterns, anomalies, and insights\n"
+                "- Final recommendations for ML modeling\n\n"
+                "Generate a CONCISE markdown report with these sections:\n"
+                "# Executive Summary, ## Data Overview, ## Data Quality, "
+                "## Key Findings, ## Statistical Results, ## Recommendations"
             ),
             llm=llm_long,
             tools=[],
@@ -302,135 +419,214 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
 # ============================================================================
 
 def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
+    # === CORE MODE TASK PREFIX ===
+    core_mode_prefix = (
+        "CORE MODE ACTIVE: Use pre-loaded variables (df_raw, DATASET_COLUMNS, "
+        "NUMERIC_COLUMNS, CATEGORICAL_COLUMNS). NEVER call pd.read_csv().\n\n"
+    )
+    
     tasks = {
         "library_import": Task(
             description=(
-                "Use the shared Python session (already created by the tool).\n"
-                "- Confirm that pandas, numpy, matplotlib, seaborn are imported.\n"
-                "- Confirm that df_raw exists and print its shape only.\n"
-                "- Do NOT call read_csv or touch the filesystem.\n"
-                "Return: very short Python code that only inspects existing df_raw."
+                f"{core_mode_prefix}"
+                "TASK: Verify environment is ready.\n"
+                "CODE TO EXECUTE:\n"
+                "```\n"
+                "print('Environment Check:')\n"
+                "print(f'df_raw loaded: {\"df_raw\" in dir()}')\n"
+                "print(f'Shape: {DATASET_SHAPE}')\n"
+                "print(f'Columns available: {len(DATASET_COLUMNS)}')\n"
+                "print(f'Numeric: {NUMERIC_COLUMNS}')\n"
+                "print(f'Categorical: {CATEGORICAL_COLUMNS}')\n"
+                "```\n"
+                "Output ONLY this verification code. No conversation."
             ),
-            expected_output="Short Python snippet that checks libraries and df_raw shape.",
+            expected_output="Environment verification output showing df_raw and metadata are loaded.",
             agent=agents["library_import"],
             async_execution=False,
         ),
         "data_loading": Task(
             description=(
-                "Using the in-memory df_raw (DO NOT reload from disk):\n"
-                "- Print shape (rows, columns).\n"
-                "- Print column names with dtypes.\n"
-                "- Print missing value count per column.\n"
-                "- Print df_raw.head(3).\n"
-                "Return only concise Python code plus minimal print statements."
+                f"{core_mode_prefix}"
+                "TASK: Summarize df_raw structure using metadata variables.\n"
+                "REQUIRED OUTPUT (as Python code):\n"
+                "1. print(f'Shape: {df_raw.shape}')\n"
+                "2. print(f'Columns: {DATASET_COLUMNS}')\n"
+                "3. print(df_raw.dtypes)\n"
+                "4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n"
+                "5. print(df_raw.head(3))\n"
+                "Do NOT reload data. Use existing variables only."
             ),
-            expected_output="Concise summary of df_raw structure.",
+            expected_output="Structured summary of df_raw using metadata variables.",
             agent=agents["data_loading"],
             async_execution=False,
         ),
         "data_inspection": Task(
             description=(
-                "Work with the existing df_raw in memory.\n"
-                "Write ONE short Python script that:\n"
-                "- Prints a table: column name, dtype, number of unique values using df_raw.dtypes and nunique().\n"
-                "- Prints count of duplicate rows using df_raw.duplicated().sum().\n"
-                "- Prints min and max for numeric columns using df_raw.describe().loc[['min','max']].\n"
-                "- Prints 2 or 3 bullet-style lines describing obvious quality issues based ONLY on these stats.\n"
-                "Do NOT use loops over rows, do NOT reload the dataset, and keep output very small."
+                f"{core_mode_prefix}"
+                "TASK: Inspect data quality using dynamic column references.\n"
+                "REQUIRED CHECKS:\n"
+                "1. For col in NUMERIC_COLUMNS: print min, max, null count\n"
+                "2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n"
+                "3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n"
+                "4. Print 2-3 bullet points summarizing quality issues found.\n"
+                "Use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names."
             ),
-            expected_output="Short inspection report of df_raw.",
+            expected_output="Quality inspection report using dynamic column detection.",
             agent=agents["data_inspection"],
             async_execution=False,
         ),
         "data_validation": Task(
             description=(
-                "Implement data validation rules using df_raw in memory.\n"
-                "- Create/overwrite a dict called validation_report.\n"
-                "- Include checks such as: missingness per column, numeric range issues, "
-                "unexpected category levels, and duplicate key rows if applicable.\n"
-                "- Store results in validation_report and print a concise summary.\n"
-                "Do NOT reload the dataset and do NOT create new DataFrames here."
+                f"{core_mode_prefix}"
+                "TASK: Validate df_raw and populate validation_report dict.\n"
+                "VALIDATION RULES (iterate dynamically):\n"
+                "```\n"
+                "validation_report = {}\n"
+                "validation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\n"
+                "validation_report['duplicates'] = int(df_raw.duplicated().sum())\n"
+                "for col in NUMERIC_COLUMNS:\n"
+                "    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\n"
+                "for col in CATEGORICAL_COLUMNS:\n"
+                "    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n"
+                "```\n"
+                "Print summary of validation_report. Do NOT create new DataFrames."
             ),
-            expected_output="Short validation summary and a populated validation_report dict.",
+            expected_output="validation_report dict populated with dynamic validation results.",
             agent=agents["data_validation"],
             async_execution=False,
         ),
         "data_cleaning": Task(
             description=(
-                "Using df_raw and validation_report from the shared session:\n"
-                "- Create df_clean as a cleaned version of df_raw.\n"
-                "- Handle missing values with a simple strategy and document it in prints.\n"
-                "- Drop exact duplicate rows.\n"
-                "- Optionally cap extreme numeric outliers.\n"
-                "- Fix obvious dtype issues.\n"
-                "- Drop rows with >50% missing values.\n"
-                "- Print a brief summary: operations performed and df_clean.shape.\n"
-                "Do not reload or save the dataset to disk."
+                f"{core_mode_prefix}"
+                "TASK: Create df_clean from df_raw based on validation_report.\n"
+                "CLEANING STEPS (use dynamic columns):\n"
+                "1. df_clean = df_raw.copy()\n"
+                "2. For col in NUMERIC_COLUMNS: impute missing with median\n"
+                "3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n"
+                "4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n"
+                "5. Print each operation performed\n"
+                "6. Print final df_clean.shape\n\n"
+                "INSPECTOR MODE: If code fails, read the traceback, identify the error, "
+                "fix it, and retry. Do NOT ask for help."
             ),
-            expected_output="Short cleaning report, df_clean created.",
+            expected_output="df_clean created with cleaning steps documented.",
             agent=agents["data_cleaning"],
             async_execution=False,
         ),
         "data_transformation": Task(
             description=(
-                "Using df_clean from the shared session:\n"
-                "- Create df_features as a transformed/feature-engineered DataFrame.\n"
-                "- Apply light scaling/normalisation to key numeric features if useful.\n"
-                "- Encode categorical variables using simple encodings.\n"
-                "- Create 1–3 meaningful derived features.\n"
-                "- Print a compact list of transformations and df_features.dtypes.\n"
-                "No disk I/O and no CSV reloading."
+                f"{core_mode_prefix}"
+                "TASK: Create df_features from df_clean for ML readiness.\n"
+                "TRANSFORMATION STEPS:\n"
+                "1. df_features = df_clean.copy()\n"
+                "2. For NUMERIC_COLUMNS: Apply StandardScaler or MinMaxScaler\n"
+                "3. For CATEGORICAL_COLUMNS: Apply LabelEncoder or pd.get_dummies()\n"
+                "4. Create 1-2 derived features if meaningful (e.g., ratios, interactions)\n"
+                "5. Update: NUMERIC_COLUMNS = df_features.select_dtypes(include=[np.number]).columns.tolist()\n"
+                "6. Print transformations applied and df_features.shape\n\n"
+                "INSPECTOR MODE: If encoding fails (e.g., unseen categories), catch error and use fallback."
             ),
-            expected_output="Transformation summary with df_features defined.",
+            expected_output="df_features created with ML-ready transformations.",
             agent=agents["data_transformation"],
             async_execution=False,
         ),
+        # === ANALYSIS TASKS: Codified Prompting + Inspector Pattern ===
         "eda_analysis": Task(
             description=(
-                "Perform concise EDA using the best available table:\n"
-                "- Prefer df_features; if it is None, fall back to df_clean, then df_raw.\n"
-                "- Print descriptive stats (mean, std, min, max) for key numeric columns.\n"
-                "- Print 2–3 notable correlations or relationships.\n"
-                "- Print 2–3 main patterns or anomalies.\n"
-                "Output as markdown-style bullets in print statements; keep it compact."
+                "CODIFIED PROMPTING: Output your plan as pseudocode FIRST, then execute.\n\n"
+                "PSEUDOCODE PLAN:\n"
+                "```\n"
+                "def perform_eda():\n"
+                "    # Step 1: Select dataframe (df_features if not None, else df_clean, else df_raw)\n"
+                "    df = df_features if df_features is not None else (df_clean if df_clean is not None else df_raw)\n"
+                "    # Step 2: Get current numeric columns\n"
+                "    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
+                "    # Step 3: Descriptive stats for numeric columns\n"
+                "    print(df[num_cols].describe())\n"
+                "    # Step 4: Correlation matrix\n"
+                "    if len(num_cols) >= 2: print(df[num_cols].corr())\n"
+                "    # Step 5: Print top 3 correlations and patterns\n"
+                "```\n"
+                "EXECUTE the plan. Output structured findings, not conversational text.\n\n"
+                "INSPECTOR MODE: If execution fails, read traceback, fix, retry (max 3 attempts)."
             ),
-            expected_output="Compact EDA findings.",
+            expected_output="EDA findings as structured output from codified plan execution.",
             agent=agents["eda_analysis"],
             async_execution=False,
         ),
         "visualizations": Task(
             description=(
-                "Using df_features or df_clean (no disk reload):\n"
-                "- Create 1–2 distribution plots for important numeric variables.\n"
-                "- Create 1 correlation heatmap if numeric columns exist.\n"
-                "- Create 1 box plot to show outliers.\n"
-                "- Use matplotlib/seaborn, and call plt.tight_layout() before finishing.\n"
-                "Figures will be saved automatically by the tool; just print a short "
-                "list of chart_name -> expected_file_stub (no full path needed)."
+                "CODIFIED PROMPTING: Output your visualization plan FIRST, then execute.\n\n"
+                "PSEUDOCODE PLAN:\n"
+                "```\n"
+                "def create_visualizations():\n"
+                "    df = df_features if df_features is not None else df_clean\n"
+                "    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
+                "    \n"
+                "    # Chart 1: Distribution of first numeric column\n"
+                "    if len(num_cols) >= 1:\n"
+                "        plt.figure(figsize=(8,5))\n"
+                "        sns.histplot(df[num_cols[0]], kde=True)\n"
+                "        plt.title(f'Distribution of {num_cols[0]}')\n"
+                "        plt.tight_layout()\n"
+                "    \n"
+                "    # Chart 2: Correlation heatmap\n"
+                "    if len(num_cols) >= 2:\n"
+                "        plt.figure(figsize=(10,8))\n"
+                "        sns.heatmap(df[num_cols].corr(), annot=True, cmap='coolwarm')\n"
+                "        plt.title('Correlation Heatmap')\n"
+                "        plt.tight_layout()\n"
+                "    \n"
+                "    # Chart 3: Box plot for outliers\n"
+                "    if len(num_cols) >= 1:\n"
+                "        plt.figure(figsize=(10,6))\n"
+                "        df[num_cols[:min(5, len(num_cols))]].boxplot()\n"
+                "        plt.title('Box Plot - Outlier Detection')\n"
+                "        plt.tight_layout()\n"
+                "```\n"
+                "EXECUTE the plan. DO NOT call plt.savefig() - tool saves automatically.\n\n"
+                "INSPECTOR MODE: If column not found, use num_cols list, fix, retry."
             ),
-            expected_output="List of chart labels and expected file names.",
+            expected_output="Charts created using dynamic column selection from codified plan.",
             agent=agents["visualizations"],
             async_execution=False,
         ),
         "statistical_tests": Task(
             description=(
-                "Use ONLY the DataFrames already in memory in the shared session.\n"
-                "- Prefer df_features; if it is None, use df_clean; if that is None, use df_raw.\n"
-                "- Do NOT call pd.read_csv or access any file paths.\n"
-                "- Before using a column name, check that it exists in df.columns; if not, skip that test "
-                "and print a short note.\n"
-                "- Run one normality test on a numeric column (for example 'Price' if it exists).\n"
-                "- Run one correlation significance test between two numeric columns that exist "
-                "(for example 'Price' and 'Engine size' if both are present).\n"
-                "- Run one simple group comparison using a categorical variable that exists "
-                "(for example 'Fuel_Type' if present).\n"
-                "Print a SHORT markdown-style section with:\n"
-                "- Test name\n"
-                "- Variables\n"
-                "- p-value\n"
-                "- One-sentence interpretation."
+                "CODIFIED PROMPTING: Output your test plan FIRST, then execute.\n\n"
+                "PSEUDOCODE PLAN:\n"
+                "```\n"
+                "def run_statistical_tests():\n"
+                "    from scipy import stats\n"
+                "    df = df_features if df_features is not None else (df_clean if df_clean is not None else df_raw)\n"
+                "    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
+                "    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()\n"
+                "    \n"
+                "    # Test 1: Normality test on first numeric column\n"
+                "    if len(num_cols) >= 1:\n"
+                "        col = num_cols[0]\n"
+                "        stat, p = stats.shapiro(df[col].dropna().head(5000))\n"
+                "        print(f'Normality Test ({col}): p-value = {p:.4f}')\n"
+                "    \n"
+                "    # Test 2: Correlation test between first two numeric columns\n"
+                "    if len(num_cols) >= 2:\n"
+                "        col1, col2 = num_cols[0], num_cols[1]\n"
+                "        r, p = stats.pearsonr(df[col1].dropna(), df[col2].dropna())\n"
+                "        print(f'Correlation Test ({col1} vs {col2}): r={r:.4f}, p-value={p:.4f}')\n"
+                "    \n"
+                "    # Test 3: Group comparison if categorical column exists\n"
+                "    if len(cat_cols) >= 1 and len(num_cols) >= 1:\n"
+                "        cat_col, num_col = cat_cols[0], num_cols[0]\n"
+                "        groups = [group[num_col].dropna() for name, group in df.groupby(cat_col)]\n"
+                "        if len(groups) >= 2:\n"
+                "            stat, p = stats.kruskal(*groups[:5])  # Limit to 5 groups\n"
+                "            print(f'Group Comparison ({num_col} by {cat_col}): p-value = {p:.4f}')\n"
+                "```\n"
+                "EXECUTE the plan. Use num_cols and cat_cols - NEVER hardcode column names.\n\n"
+                "INSPECTOR MODE: If KeyError, print available columns, select valid one, retry."
             ),
-            expected_output="Concise statistical test results.",
+            expected_output="Statistical test results using dynamic column selection.",
             agent=agents["statistical_tests"],
             async_execution=False,
         ),
@@ -460,9 +656,14 @@ class DataAnalysisWorkflow:
         self.dataset_path = str(Path(dataset_path).resolve())
         self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Generate unique run ID based on timestamp for this execution
+        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_output_dir = self.output_dir / f"run_{self.run_id}"
+        self.run_output_dir.mkdir(exist_ok=True)
 
-        # Shared, long-lived Python session tool
-        self.executor = PythonSessionTool(output_dir=str(self.output_dir / "charts"))
+        # Shared, long-lived Python session tool - charts go to run-specific directory
+        self.executor = PythonSessionTool(output_dir=str(self.run_output_dir / "charts"))
         # Load the dataset once into df_raw
         self.executor.init_session(self.dataset_path)
 
@@ -471,6 +672,14 @@ class DataAnalysisWorkflow:
 
         self.results: Dict[str, Any] = {}
         self.charts: List[Path] = []
+        self.report_path: Optional[Path] = None
+
+        # Initialize DeepSeek R1 summarizer for context compression
+        self.summarizer_llm = _make_summarizer_llm()
+        if self.summarizer_llm:
+            print("[OK] DeepSeek R1 summarizer enabled (OpenRouter)")
+        else:
+            print("[INFO] No OPENROUTER_API_KEY - using rule-based compression")
 
     # ------------------------------------------------------------------ #
     # Simple retry wrapper
@@ -525,13 +734,49 @@ class DataAnalysisWorkflow:
         return self.results[task_key]
 
     # ------------------------------------------------------------------ #
+    # Context Compression (DeepSeek R1 or rule-based fallback)
+    # ------------------------------------------------------------------ #
+    def _rule_based_compress(self, text: str, max_chars: int = 2000) -> str:
+        """Fallback compression using regex (no LLM call)."""
+        import re
+        # Remove code blocks
+        text = re.sub(r'```[\s\S]*?```', '[CODE BLOCK REMOVED]', text)
+        # Remove excessive whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Truncate if too long
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n...[TRUNCATED]"
+        return text
+
+    def _summarize_context(self, raw_text: str, phase_name: str) -> str:
+        """Compress context using DeepSeek R1 FREE or fallback to rule-based."""
+        if not self.summarizer_llm:
+            return self._rule_based_compress(raw_text)
+
+        prompt = f"""Summarize this {phase_name} output in 5-7 bullet points.
+EXTRACT ONLY: dataset shape, column names, metrics, errors, key findings.
+IGNORE: code blocks, tracebacks, verbose logs.
+
+OUTPUT:
+{raw_text[:8000]}"""
+
+        try:
+            print(f"[SUMMARIZER] Calling DeepSeek R1 for {phase_name} compression...")
+            response = self.summarizer_llm.call(prompt)
+            return str(response)
+        except Exception as e:
+            print(f"[SUMMARIZER] DeepSeek R1 failed, using fallback: {e}")
+            return self._rule_based_compress(raw_text)
+
+    # ------------------------------------------------------------------ #
     # Main pipeline
     # ------------------------------------------------------------------ #
     def run_sequential_pipeline(self) -> Dict[str, Any]:
         print(f"\n{'='*70}")
         print("STARTING SEQUENTIAL DATA ANALYSIS PIPELINE (STATEFUL)")
         print(f"Dataset: {self.dataset_path}")
-        print(f"Output Directory: {self.output_dir}")
+        print(f"Run ID: {self.run_id}")
+        print(f"Output Directory: {self.run_output_dir}")
         print("LLM: Gemini 2.5 Flash (token-optimized config)")
         print(f"{'='*70}\n")
 
@@ -561,11 +806,14 @@ class DataAnalysisWorkflow:
                 task_key=task_key,
                 extra_inputs={},
             )
-            print(f"[PHASE 1 - Task {i}/{len(prep_order)}] ✓ Completed (or max retries reached)")
+            print(f"[PHASE 1 - Task {i}/{len(prep_order)}] [OK] Completed (or max retries reached)")
 
-        self.results["preparation"] = "\n---\n".join(
+        # Compress preparation results before Phase 2
+        raw_prep = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in prep_order
         )
+        self.results["preparation"] = self._summarize_context(raw_prep, "Data Preparation")
+        print(f"[SUMMARIZER] Preparation context compressed: {len(raw_prep)} -> {len(self.results['preparation'])} chars")
         print("\n[PHASE 1] Preparation phase finished (with retries where needed)")
 
         print("\n[RATE LIMITING] Waiting 8 seconds between phases...")
@@ -594,11 +842,14 @@ class DataAnalysisWorkflow:
                 task_key=task_key,
                 extra_inputs={"context": self.results["preparation"]},
             )
-            print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] ✓ Completed (or max retries reached)")
+            print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] [OK] Completed (or max retries reached)")
 
-        self.results["analysis"] = "\n---\n".join(
+        # Compress analysis results before Phase 3
+        raw_analysis = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in analysis_order
         )
+        self.results["analysis"] = self._summarize_context(raw_analysis, "Analysis")
+        print(f"[SUMMARIZER] Analysis context compressed: {len(raw_analysis)} -> {len(self.results['analysis'])} chars")
         print("\n[PHASE 2] Analysis phase finished (with retries where needed)")
 
         print("\n[RATE LIMITING] Waiting 6 seconds before final report...")
@@ -611,19 +862,31 @@ class DataAnalysisWorkflow:
 
         report_task = Task(
             description=(
-                "Using the analysis context below, write a concise markdown report.\n\n"
-                "=== PREPARATION PHASE ===\n"
+                "TOKEN STRATIFICATION: Generate a markdown report by extracting ONLY high-value insights.\n\n"
+                "=== CONTEXT (Apply Token Stratification - ignore code, extract insights) ===\n\n"
+                "PREPARATION PHASE RESULTS:\n"
                 f"{self.results.get('preparation', 'N/A')}\n\n"
-                "=== ANALYSIS PHASE ===\n"
+                "ANALYSIS PHASE RESULTS:\n"
                 f"{self.results.get('analysis', 'N/A')}\n\n"
-                "Requirements:\n"
-                "- Output valid markdown only.\n"
-                "- Max length about 800–1000 words.\n"
-                "- Sections: # Executive Summary, ## Data, ## Cleaning, "
-                "## EDA, ## Statistics, ## Key Insights.\n"
-                "- Use short bullet points and avoid repeating large tables."
+                "=== TOKEN STRATIFICATION RULES ===\n"
+                "IGNORE: Code blocks, tracebacks, raw dataframe outputs, verbose logs\n"
+                "EXTRACT: Dataset shape, column names, quality issues, correlations, p-values, chart paths, patterns\n\n"
+                "=== REQUIRED OUTPUT FORMAT ===\n"
+                "# Executive Summary\n"
+                "(2-3 sentences: dataset size, main findings, ML readiness)\n\n"
+                "## Data Overview\n"
+                "(Shape, column types, target variable if identifiable)\n\n"
+                "## Data Quality & Cleaning\n"
+                "(Issues found, cleaning steps applied)\n\n"
+                "## Key Findings\n"
+                "(Top correlations, patterns, anomalies - bullet points)\n\n"
+                "## Statistical Results\n"
+                "(Test names, variables, p-values, interpretations)\n\n"
+                "## Recommendations\n"
+                "(Next steps for ML modeling)\n\n"
+                "Max 800 words. No code blocks. Bullet points preferred."
             ),
-            expected_output="Concise markdown report (<= ~1000 words).",
+            expected_output="Concise markdown report using Token Stratification (<= 800 words).",
             agent=self.agents["report_generator"],
         )
 
@@ -632,29 +895,108 @@ class DataAnalysisWorkflow:
             print(f"[TIME] {datetime.now().strftime('%H:%M:%S')} - Starting report task...")
             report_result = report_task.execute_sync(agent=self.agents["report_generator"])
             self.results["report"] = str(report_result)
-            print("\n[PHASE 3] ✓ Report generation completed")
+            print("\n[PHASE 3] [OK] Report generation completed")
         except Exception as e:
-            print(f"\n[PHASE 3] ✗ Error in report generation: {e}")
-            self.results["report"] = f"Error: {str(e)}"
+            print(f"\n[PHASE 3] [ERROR] Error in report generation: {e}")
+            # Generate a fallback report from the collected results
+            self.results["report"] = self._generate_fallback_report()
 
-        self.charts = list((self.output_dir / "charts").glob("*.png"))
+        # Collect charts from run-specific directory and save report immediately
+        charts_dir = self.run_output_dir / "charts"
+        if charts_dir.exists():
+            self.charts = list(charts_dir.glob("*.png"))
+        else:
+            self.charts = []
+        
+        # Save the report now to ensure it's written even if something fails later
+        self._save_report_to_file()
+        
         return self.results
+    
+    def _generate_fallback_report(self) -> str:
+        """Generate a fallback report from collected results if LLM fails."""
+        report_lines = [
+            "# Data Analysis Report",
+            "",
+            f"*Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+            "",
+            "## Executive Summary",
+            "",
+            "This report was auto-generated from the analysis pipeline results.",
+            "",
+            "## Preparation Phase Results",
+            "",
+            "```",
+            self.results.get("preparation", "No preparation results available.")[:2000],
+            "```",
+            "",
+            "## Analysis Phase Results", 
+            "",
+            "```",
+            self.results.get("analysis", "No analysis results available.")[:2000],
+            "```",
+            "",
+            "## Charts Generated",
+            "",
+        ]
+        
+        charts_dir = self.run_output_dir / "charts"
+        if charts_dir.exists():
+            for chart in charts_dir.glob("*.png"):
+                report_lines.append(f"- {chart.name}")
+        else:
+            report_lines.append("No charts were generated.")
+        
+        return "\n".join(report_lines)
+    
+    def _save_report_to_file(self):
+        """Save the report to file immediately in the run-specific directory."""
+        report_md = self.results.get("report", "")
+        if not report_md or report_md.startswith("Error:"):
+            report_md = self._generate_fallback_report()
+        
+        # Save to run-specific directory with unique filename
+        self.report_path = self.run_output_dir / f"analysis_report_{self.run_id}.md"
+        try:
+            self.report_path.write_text(report_md, encoding="utf-8")
+            print(f"[REPORT] [OK] Report saved to: {self.report_path}")
+        except Exception as e:
+            print(f"[REPORT] [ERROR] Failed to save report: {e}")
 
     # ------------------------------------------------------------------ #
     # Report generation helpers
     # ------------------------------------------------------------------ #
     def generate_markdown_report(self) -> str:
+        """Generate and save the markdown report. Report may already be saved."""
+        # Use run-specific report path
+        report_path = self.report_path or (self.run_output_dir / f"analysis_report_{self.run_id}.md")
+        
+        # Check if report was already saved during pipeline
+        if report_path.exists():
+            print(f"\n{'='*70}")
+            print("[OK] MARKDOWN REPORT ALREADY GENERATED")
+            print(f"Location: {report_path}")
+            print(f"Run directory: {self.run_output_dir}")
+            print(f"{'='*70}\n")
+            return str(report_path)
+        
+        # If not, save it now
         report_md = self.results.get("report", "")
-        if not report_md:
-            report_md = "# Analysis Report\n\n_No report content generated._"
+        if not report_md or report_md.startswith("Error:"):
+            report_md = self._generate_fallback_report()
 
-        report_path = self.output_dir / "analysis_report.md"
-        report_path.write_text(report_md, encoding="utf-8")
-
-        print(f"\n{'='*70}")
-        print("✓ MARKDOWN REPORT GENERATED")
-        print(f"Location: {report_path}")
-        print(f"{'='*70}\n")
+        try:
+            report_path.write_text(report_md, encoding="utf-8")
+            self.report_path = report_path
+            print(f"\n{'='*70}")
+            print("[OK] MARKDOWN REPORT GENERATED")
+            print(f"Location: {report_path}")
+            print(f"Run directory: {self.run_output_dir}")
+            print(f"{'='*70}\n")
+        except Exception as e:
+            print(f"\n{'='*70}")
+            print(f"[ERROR] FAILED TO SAVE REPORT: {e}")
+            print(f"{'='*70}\n")
 
         return str(report_path)
 
@@ -681,7 +1023,7 @@ def create_sample_dataset(path: str):
 
     df = pd.DataFrame(data)
     df.to_csv(path, index=False)
-    print(f"✓ Sample dataset created: {path}")
+    print(f"[OK] Sample dataset created: {path}")
     print(f"  Shape: {df.shape}")
     print(f"  Columns: {list(df.columns)}")
 

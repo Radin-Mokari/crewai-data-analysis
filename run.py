@@ -37,23 +37,30 @@ def main():
 
     # Verify API key is set
     if not api_key:
-        print("❌ ERROR: GEMINI_API_KEY not set!")
+        print("[ERROR] GEMINI_API_KEY not set!")
         print("\nFix: Open .env file and add your API key:")
         print("  GEMINI_API_KEY=your_actual_key_here")
         return
 
-    print("✓ API Key configured")
-    print("✓ Using LLM: gemini-2.5-flash")
+    print("[OK] Gemini API Key configured")
+    print("[OK] Using LLM: gemini-2.5-flash")
+
+    # Check for optional OpenRouter API key (DeepSeek R1 summarizer)
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key and not openrouter_key.startswith("your-"):
+        print("[OK] OpenRouter API Key configured (DeepSeek R1 summarizer enabled)")
+    else:
+        print("[INFO] No OpenRouter API Key - using rule-based context compression")
 
     # Require that the dataset already exists; do NOT create any sample CSV
     if not Path(dataset_path).exists():
-        print(f"\n❌ Dataset not found on disk: {dataset_path}")
+        print(f"\n[ERROR] Dataset not found on disk: {dataset_path}")
         print("Fix one of these:")
         print("  - Place your CSV in this project folder with that exact name, or")
         print("  - Update DATASET_PATH in .env to the correct relative path.")
         return
     else:
-        print(f"✓ Using dataset: {dataset_path}")
+        print(f"[OK] Using dataset: {dataset_path}")
 
     # Initialize workflow
     print("\nInitializing workflow...")
@@ -75,18 +82,19 @@ def main():
         report_path = workflow.generate_markdown_report()
 
         print(f"\n{'='*70}")
-        print("✅ ANALYSIS COMPLETE!")
+        print("[SUCCESS] ANALYSIS COMPLETE!")
         print(f"{'='*70}")
-        print("\n📊 Report saved to:")
+        print(f"\n[RUN ID] {workflow.run_id}")
+        print("\n[REPORT] Report saved to:")
         print(f"  {Path(report_path).absolute()}\n")
-        print("📁 Output directory:")
-        print(f"  {Path(output_dir).absolute()}\n")
+        print("[OUTPUT] Run output directory:")
+        print(f"  {workflow.run_output_dir.absolute()}\n")
 
         return report_path
 
     except Exception as e:
         print(f"\n{'='*70}")
-        print("❌ ANALYSIS FAILED")
+        print("[FAILED] ANALYSIS FAILED")
         print(f"{'='*70}")
         print(f"\nError: {str(e)}")
         print("\nTroubleshooting:")
