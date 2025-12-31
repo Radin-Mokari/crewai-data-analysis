@@ -189,6 +189,12 @@ print("===================================")
         # Attach state validation flags
         result["state_flags"] = self.validate_state()
 
+        # Reset stdout to prevent Rich FileProxy corruption
+        # Rich wraps stdout, and redirect_stdout can corrupt its internal state
+        import sys
+        if hasattr(sys, '__stdout__') and sys.__stdout__ is not None:
+            sys.stdout = sys.__stdout__
+
         return json.dumps(result)
 
 
@@ -368,27 +374,15 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
             tools=[executor_tool],
             verbose=True,
         ),
-        # === REPORT AGENT: Token Stratification ===
+        # === REPORT AGENT ===
         "report_generator": Agent(
             role="Technical Report Writer",
-            goal="Produce a markdown report using TOKEN STRATIFICATION - extract only high-value insights.",
+            goal="Produce a concise markdown report summarizing data analysis results.",
             backstory=(
-                "You use TOKEN STRATIFICATION to filter context efficiently.\n"
-                "IGNORE (low-value tokens):\n"
-                "- Code syntax and implementation details\n"
-                "- Execution logs and tracebacks\n"
-                "- Raw dataframe outputs and intermediate steps\n"
-                "- Verbose debugging information\n\n"
-                "EXTRACT ONLY (high-value tokens):\n"
-                "- Dataset shape and column summary\n"
-                "- Data quality issues found and how they were resolved\n"
-                "- Statistical metrics: correlations, p-values, test results\n"
-                "- Visualization file paths (charts created)\n"
-                "- Key patterns, anomalies, and insights\n"
-                "- Final recommendations for ML modeling\n\n"
-                "Generate a CONCISE markdown report with these sections:\n"
-                "# Executive Summary, ## Data Overview, ## Data Quality, "
-                "## Key Findings, ## Statistical Results, ## Recommendations"
+                "You are a technical writer who creates clear, professional data analysis reports. "
+                "You extract key insights from analysis results and present them in a structured format. "
+                "You focus on: dataset characteristics, data quality, statistical findings, and recommendations. "
+                "You output ONLY the markdown report with no explanations or reasoning - just the content."
             ),
             llm=llm_long,
             tools=[],
@@ -781,7 +775,7 @@ class DataAnalysisWorkflow:
                 agent=agent,
                 task=task,
                 task_key=task_key,
-                extra_inputs={"context": self.results["preparation"]},
+                extra_inputs={},
             )
             print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] [OK] Completed (or max retries reached)")
 
@@ -801,16 +795,16 @@ class DataAnalysisWorkflow:
 
         report_task = Task(
             description=(
-                "TOKEN STRATIFICATION: Generate a markdown report by extracting ONLY high-value insights.\n\n"
-                "=== CONTEXT (Apply Token Stratification - ignore code, extract insights) ===\n\n"
+                "Generate a markdown report summarizing the data analysis results.\n\n"
+                "=== ANALYSIS CONTEXT ===\n\n"
                 "PREPARATION PHASE RESULTS:\n"
                 f"{self.results.get('preparation', 'N/A')}\n\n"
                 "ANALYSIS PHASE RESULTS:\n"
                 f"{self.results.get('analysis', 'N/A')}\n\n"
-                "=== TOKEN STRATIFICATION RULES ===\n"
-                "IGNORE: Code blocks, tracebacks, raw dataframe outputs, verbose logs\n"
-                "EXTRACT: Dataset shape, column names, quality issues, correlations, p-values, chart paths, patterns\n\n"
-                "=== REQUIRED OUTPUT FORMAT ===\n"
+                "=== OUTPUT INSTRUCTIONS ===\n"
+                "OUTPUT ONLY the markdown report. Do NOT include any explanations, plans, or reasoning.\n"
+                "Start directly with '# Executive Summary' - no preamble.\n\n"
+                "=== REQUIRED SECTIONS ===\n"
                 "# Executive Summary\n"
                 "(2-3 sentences: dataset size, main findings, ML readiness)\n\n"
                 "## Data Overview\n"
@@ -825,7 +819,7 @@ class DataAnalysisWorkflow:
                 "(Next steps for ML modeling)\n\n"
                 "Max 800 words. No code blocks. Bullet points preferred."
             ),
-            expected_output="Concise markdown report using Token Stratification (<= 800 words).",
+            expected_output="Markdown report starting with '# Executive Summary' (<= 800 words). No preamble or explanations.",
             agent=self.agents["report_generator"],
         )
 
