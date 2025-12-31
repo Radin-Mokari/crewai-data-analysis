@@ -121,6 +121,19 @@ print(f"All columns: {{DATASET_COLUMNS}}")
 print(f"Numeric columns ({{len(NUMERIC_COLUMNS)}}): {{NUMERIC_COLUMNS}}")
 print(f"Categorical columns ({{len(CATEGORICAL_COLUMNS)}}): {{CATEGORICAL_COLUMNS}}")
 print("===================================")
+
+# === STATE VALIDATION HELPER ===
+def validate_core_state():
+    '''Call at start of each task to verify state is ready.'''
+    g = globals()
+    required = ['df_raw', 'NUMERIC_COLUMNS', 'CATEGORICAL_COLUMNS', 'DATASET_COLUMNS']
+    missing = [v for v in required if v not in g or g.get(v) is None]
+    if missing:
+        raise RuntimeError(f'Missing required state: {{missing}}')
+    print('State OK: All required variables present')
+    print(f'  - NUMERIC_COLUMNS: {{len(NUMERIC_COLUMNS)}} columns')
+    print(f'  - CATEGORICAL_COLUMNS: {{len(CATEGORICAL_COLUMNS)}} columns')
+    return True
 """
         exec(code, self.session_globals)
 
@@ -232,7 +245,8 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         "1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. "
         "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
         "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
-        "4) Output concise code, no conversational text."
+        "4) Output concise code, no conversational text. "
+        "5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
     )
 
     agents = {
@@ -398,11 +412,8 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
 # ============================================================================
 
 def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
-    # === CORE MODE TASK PREFIX ===
-    core_mode_prefix = (
-        "CORE MODE ACTIVE: Use pre-loaded variables (df_raw, DATASET_COLUMNS, "
-        "NUMERIC_COLUMNS, CATEGORICAL_COLUMNS). NEVER call pd.read_csv().\n\n"
-    )
+    # === CORE MODE TASK PREFIX (shortened - full rules in agent backstory) ===
+    core_mode_prefix = "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\n"
     
     tasks = {
         "library_import": Task(
@@ -496,7 +507,13 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
         "data_transformation": Task(
             description=(
                 f"{core_mode_prefix}"
-                "TASK: Create df_features from df_clean for ML readiness.\n"
+                "TASK: Create df_features from df_clean for ML readiness.\n\n"
+                "STEP 0 (REQUIRED FIRST): Print state verification:\n"
+                "```\n"
+                "print(f'NUMERIC_COLUMNS: {NUMERIC_COLUMNS}')\n"
+                "print(f'CATEGORICAL_COLUMNS: {CATEGORICAL_COLUMNS}')\n"
+                "print(f'df_clean shape: {df_clean.shape}')\n"
+                "```\n\n"
                 "TRANSFORMATION STEPS:\n"
                 "1. df_features = df_clean.copy()\n"
                 "2. For NUMERIC_COLUMNS: Apply StandardScaler or MinMaxScaler\n"
