@@ -1,6 +1,6 @@
 # CrewAI Data Analysis Pipeline
 
-A multi-agent sequential pipeline for automated data analysis using CrewAI and Google Gemini, with optional DeepSeek R1 context compression.
+A multi-agent sequential pipeline for automated data analysis using CrewAI and Google Gemini.
 
 ## Features
 
@@ -8,15 +8,13 @@ A multi-agent sequential pipeline for automated data analysis using CrewAI and G
 - **Sequential Pipeline**: Data loading → Inspection → Cleaning → Transformation → EDA → Visualization → Statistical Analysis → Report Generation
 - **Core Mode Prompting**: Agents use dynamic column detection (no hardcoded column names)
 - **Codified Prompting**: Analysis agents output pseudocode plans before execution
-- **Token Compression**: Optional DeepSeek R1 summarization between phases
 - **Rate Limiting**: Built-in rate limiting to avoid API throttling
 - **Automated Reporting**: Generates markdown reports with analysis findings
 
 ## Requirements
 
 - Python 3.9+
-- Google Gemini API key (required)
-- OpenRouter API key (optional, for DeepSeek R1 compression)
+- Google Gemini API key
 
 ## Setup
 
@@ -63,20 +61,16 @@ python fix_bug.py
 cp .env.example .env
 ```
 
-Edit `.env` and add your API keys:
+Edit `.env` and add your API key:
 
 ```
 GEMINI_API_KEY=your-gemini-api-key-here
 DATASET_PATH=Housing.csv
 OUTPUT_DIR=./analysis_results
-
-# Optional: For DeepSeek R1 context compression
-OPENROUTER_API_KEY=your-openrouter-api-key-here
 ```
 
-**Get your API keys:**
-- Gemini: https://aistudio.google.com/app/apikey
-- OpenRouter (free): https://openrouter.ai (no credit card required)
+**Get your Gemini API key:**
+- https://aistudio.google.com/app/apikey
 
 ## Usage
 
@@ -142,18 +136,6 @@ analysis_results/
 - **Inspector Pattern**: Agents self-correct errors by reading tracebacks and retrying
 - **Token Stratification**: Report agent focuses on high-value insights, ignoring code blocks and verbose logs
 
-## Token Compression (Optional)
-
-When `OPENROUTER_API_KEY` is set, the pipeline uses DeepSeek R1 to summarize context between phases:
-
-```
-Phase 1 (6 agents) → [DeepSeek R1 Summary] → Phase 2 (3 agents) → [DeepSeek R1 Summary] → Report
-```
-
-This reduces token usage by ~80% for context passed between phases.
-
-**Fallback**: If OpenRouter is unavailable, rule-based compression is used automatically.
-
 ## Troubleshooting
 
 ### Windows: SIGHUP Error
@@ -178,12 +160,6 @@ python run.py
 ImportError: Google Gen AI native provider not available
 ```
 **Fix:** Ensure `crewai[google-genai]` is installed (included in requirements.txt)
-
-### LiteLLM Fallback Error
-```
-ImportError: Fallback to LiteLLM is not available
-```
-**Fix:** Ensure `litellm` is installed (included in requirements.txt)
 
 ## License
 

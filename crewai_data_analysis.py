@@ -210,21 +210,6 @@ def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
     )
 
 
-def _make_summarizer_llm():
-    """Create a free DeepSeek R1 LLM for context summarization via OpenRouter."""
-    from crewai import LLM
-
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        return None  # Fallback to rule-based compression
-
-    return LLM(
-        model="openrouter/deepseek/deepseek-r1:free",  # openrouter/ prefix for CrewAI routing
-        api_key=api_key,
-        config={"max_output_tokens": 500}
-    )
-
-
 # ============================================================================
 # PART 3: AGENT DEFINITIONS (STATE-AWARE)
 # ============================================================================
@@ -674,13 +659,6 @@ class DataAnalysisWorkflow:
         self.charts: List[Path] = []
         self.report_path: Optional[Path] = None
 
-        # Initialize DeepSeek R1 summarizer for context compression
-        self.summarizer_llm = _make_summarizer_llm()
-        if self.summarizer_llm:
-            print("[OK] DeepSeek R1 summarizer enabled (OpenRouter)")
-        else:
-            print("[INFO] No OPENROUTER_API_KEY - using rule-based compression")
-
     # ------------------------------------------------------------------ #
     # Simple retry wrapper
     # ------------------------------------------------------------------ #
@@ -734,41 +712,6 @@ class DataAnalysisWorkflow:
         return self.results[task_key]
 
     # ------------------------------------------------------------------ #
-    # Context Compression (DeepSeek R1 or rule-based fallback)
-    # ------------------------------------------------------------------ #
-    def _rule_based_compress(self, text: str, max_chars: int = 2000) -> str:
-        """Fallback compression using regex (no LLM call)."""
-        import re
-        # Remove code blocks
-        text = re.sub(r'```[\s\S]*?```', '[CODE BLOCK REMOVED]', text)
-        # Remove excessive whitespace
-        text = re.sub(r'\n{3,}', '\n\n', text)
-        # Truncate if too long
-        if len(text) > max_chars:
-            text = text[:max_chars] + "\n...[TRUNCATED]"
-        return text
-
-    def _summarize_context(self, raw_text: str, phase_name: str) -> str:
-        """Compress context using DeepSeek R1 FREE or fallback to rule-based."""
-        if not self.summarizer_llm:
-            return self._rule_based_compress(raw_text)
-
-        prompt = f"""Summarize this {phase_name} output in 5-7 bullet points.
-EXTRACT ONLY: dataset shape, column names, metrics, errors, key findings.
-IGNORE: code blocks, tracebacks, verbose logs.
-
-OUTPUT:
-{raw_text[:8000]}"""
-
-        try:
-            print(f"[SUMMARIZER] Calling DeepSeek R1 for {phase_name} compression...")
-            response = self.summarizer_llm.call(prompt)
-            return str(response)
-        except Exception as e:
-            print(f"[SUMMARIZER] DeepSeek R1 failed, using fallback: {e}")
-            return self._rule_based_compress(raw_text)
-
-    # ------------------------------------------------------------------ #
     # Main pipeline
     # ------------------------------------------------------------------ #
     def run_sequential_pipeline(self) -> Dict[str, Any]:
@@ -808,12 +751,10 @@ OUTPUT:
             )
             print(f"[PHASE 1 - Task {i}/{len(prep_order)}] [OK] Completed (or max retries reached)")
 
-        # Compress preparation results before Phase 2
-        raw_prep = "\n---\n".join(
+        # Store preparation results for context
+        self.results["preparation"] = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in prep_order
         )
-        self.results["preparation"] = self._summarize_context(raw_prep, "Data Preparation")
-        print(f"[SUMMARIZER] Preparation context compressed: {len(raw_prep)} -> {len(self.results['preparation'])} chars")
         print("\n[PHASE 1] Preparation phase finished (with retries where needed)")
 
         print("\n[RATE LIMITING] Waiting 8 seconds between phases...")
@@ -844,12 +785,10 @@ OUTPUT:
             )
             print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] [OK] Completed (or max retries reached)")
 
-        # Compress analysis results before Phase 3
-        raw_analysis = "\n---\n".join(
+        # Store analysis results for context
+        self.results["analysis"] = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in analysis_order
         )
-        self.results["analysis"] = self._summarize_context(raw_analysis, "Analysis")
-        print(f"[SUMMARIZER] Analysis context compressed: {len(raw_analysis)} -> {len(self.results['analysis'])} chars")
         print("\n[PHASE 2] Analysis phase finished (with retries where needed)")
 
         print("\n[RATE LIMITING] Waiting 6 seconds before final report...")

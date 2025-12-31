@@ -45,13 +45,6 @@ def main():
     print("[OK] Gemini API Key configured")
     print("[OK] Using LLM: gemini-2.5-flash")
 
-    # Check for optional OpenRouter API key (DeepSeek R1 summarizer)
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
-    if openrouter_key and not openrouter_key.startswith("your-"):
-        print("[OK] OpenRouter API Key configured (DeepSeek R1 summarizer enabled)")
-    else:
-        print("[INFO] No OpenRouter API Key - using rule-based context compression")
-
     # Require that the dataset already exists; do NOT create any sample CSV
     if not Path(dataset_path).exists():
         print(f"\n[ERROR] Dataset not found on disk: {dataset_path}")
