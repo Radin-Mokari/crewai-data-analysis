@@ -15,6 +15,7 @@ A multi-agent sequential pipeline for automated data analysis using CrewAI and G
 
 - Python 3.9+
 - Google Gemini API key
+- AgentOps API key (optional, for monitoring)
 
 ## Setup
 
@@ -61,16 +62,20 @@ python fix_bug.py
 cp .env.example .env
 ```
 
-Edit `.env` and add your API key:
+Edit `.env` and add your API keys:
 
 ```
 GEMINI_API_KEY=your-gemini-api-key-here
 DATASET_PATH=Housing.csv
 OUTPUT_DIR=./analysis_results
+
+# Optional: Enable AgentOps monitoring
+AGENTOPS_API_KEY=your-agentops-api-key-here
 ```
 
-**Get your Gemini API key:**
-- https://aistudio.google.com/app/apikey
+**Get your API keys:**
+- Gemini: https://aistudio.google.com/app/apikey
+- AgentOps: https://app.agentops.ai (free)
 
 ## Usage
 
@@ -135,6 +140,28 @@ analysis_results/
 - **Codified Prompting**: Analysis agents output structured pseudocode before execution
 - **Inspector Pattern**: Agents self-correct errors by reading tracebacks and retrying
 - **Token Stratification**: Report agent focuses on high-value insights, ignoring code blocks and verbose logs
+
+## AgentOps Monitoring (Optional)
+
+AgentOps provides observability for the workflow, tracking agent interactions, LLM calls, and task executions.
+
+### Setup
+
+1. Sign up at https://app.agentops.ai
+2. Copy your API key
+3. Add to `.env`:
+   ```
+   AGENTOPS_API_KEY=your-key-here
+   ```
+
+### Features
+
+- Real-time agent activity tracking
+- LLM token usage monitoring
+- Task completion traces
+- Error debugging
+
+When enabled, you'll see `[OK] AgentOps monitoring enabled` in the terminal output.
 
 ## Troubleshooting
 

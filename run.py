@@ -21,6 +21,17 @@ os.environ["CREWAI_LLM_MODEL"] = "gemini-2.5-flash"
 
 from crewai_data_analysis import DataAnalysisWorkflow
 
+# Initialize AgentOps for workflow observability (if API key is set)
+# NOTE: Must be AFTER CrewAI imports to avoid circular import error
+agentops_key = os.getenv("AGENTOPS_API_KEY")
+if agentops_key:
+    import agentops
+    agentops.init(
+        api_key=agentops_key,
+        default_tags=['crewai']
+    )
+    print("[OK] AgentOps monitoring enabled - view at https://app.agentops.ai")
+
 
 def main():
     """Main entry point."""
