@@ -75,6 +75,13 @@ class PythonSessionTool(BaseTool):
         # Replace plt.savefig with our wrapped version
         plt.savefig = wrapped_savefig
         
+        # Set consistent plot styling for all visualizations
+        plt.style.use('seaborn-v0_8-whitegrid')
+        plt.rcParams['figure.figsize'] = [10, 6]
+        plt.rcParams['axes.titlesize'] = 14
+        plt.rcParams['axes.labelsize'] = 12
+        plt.rcParams['font.size'] = 11
+        
         base_globals = {
             "__name__": "__session__",
             "pd": pd,
@@ -113,6 +120,11 @@ CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category']).colum
 BOOLEAN_COLUMNS = df_raw.select_dtypes(include=['bool']).columns.tolist()
 DATASET_SHAPE = df_raw.shape
 DATASET_PATH = dataset_path
+
+# === PRESERVE ORIGINAL COLUMNS (before any transformations) ===
+# These are used by visualization agent for interpretable charts
+ORIGINAL_NUMERIC_COLUMNS = NUMERIC_COLUMNS.copy()
+ORIGINAL_CATEGORICAL_COLUMNS = CATEGORICAL_COLUMNS.copy()
 
 # Print metadata summary for agents to reference
 print("=== CORE MODE: Dataset Metadata ===")
@@ -350,21 +362,20 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         ),
         "visualizations": Agent(
             role="Data Visualization Specialist",
-            goal="Generate charts using CODIFIED PROMPTING - plan visualizations first, then create.",
+            goal="Analyze data characteristics and generate the most insightful visualizations.",
             backstory=(
-                "You use CODIFIED PROMPTING: Output your visualization plan as pseudocode FIRST.\n"
-                "PLAN FORMAT:\n"
-                "```\n"
-                "def create_visualizations(df):\n"
-                "    # Chart 1: Distribution of first numeric column\n"
-                "    # Chart 2: Correlation heatmap of NUMERIC_COLUMNS\n"
-                "    # Chart 3: Box plot for outlier detection\n"
-                "```\n"
-                "Then execute. Use NUMERIC_COLUMNS for dynamic column selection. "
-                "DO NOT call plt.savefig() - tool saves automatically. "
-                "INSPECTOR MODE: If plt errors occur, check column exists, fix, retry."
+                "You are an INTELLIGENT visualization specialist who analyzes data BEFORE choosing charts.\n"
+                "STEP 1 - ANALYZE DATA CHARACTERISTICS:\n"
+                "- Compute skewness: highly skewed (|skew|>1) needs log-scale or box plot\n"
+                "- Check cardinality: nunique<=10 use bar chart, nunique>20 use histogram\n"
+                "- Find top correlations: |corr|>0.5 deserves scatter plot\n"
+                "- Detect binary columns (nunique==2): use as grouping/hue variable\n"
+                "STEP 2 - SELECT CHARTS based on insights, not fixed templates.\n"
+                "CRITICAL: Use df_clean (not df_features) for interpretable values.\n"
+                "Use ORIGINAL_NUMERIC_COLUMNS for original column names.\n"
+                "DO NOT call plt.savefig() - tool saves automatically."
             ),
-            llm=llm_short,
+            llm=llm_medium,  # Upgraded from short for better analysis
             tools=[executor_tool],
             verbose=True,
         ),
@@ -553,38 +564,40 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
         ),
         "visualizations": Task(
             description=(
-                "CODIFIED PROMPTING: Output your visualization plan FIRST, then execute.\n\n"
-                "PSEUDOCODE PLAN:\n"
+                "INTELLIGENT VISUALIZATION: Analyze data characteristics, then create insightful charts.\n\n"
+                "STEP 1 - ANALYZE (execute this code first):\n"
                 "```\n"
-                "def create_visualizations():\n"
-                "    df = df_features if df_features is not None else df_clean\n"
-                "    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
-                "    \n"
-                "    # Chart 1: Distribution of first numeric column\n"
-                "    if len(num_cols) >= 1:\n"
-                "        plt.figure(figsize=(8,5))\n"
-                "        sns.histplot(df[num_cols[0]], kde=True)\n"
-                "        plt.title(f'Distribution of {num_cols[0]}')\n"
-                "        plt.tight_layout()\n"
-                "    \n"
-                "    # Chart 2: Correlation heatmap\n"
-                "    if len(num_cols) >= 2:\n"
-                "        plt.figure(figsize=(10,8))\n"
-                "        sns.heatmap(df[num_cols].corr(), annot=True, cmap='coolwarm')\n"
-                "        plt.title('Correlation Heatmap')\n"
-                "        plt.tight_layout()\n"
-                "    \n"
-                "    # Chart 3: Box plot for outliers\n"
-                "    if len(num_cols) >= 1:\n"
-                "        plt.figure(figsize=(10,6))\n"
-                "        df[num_cols[:min(5, len(num_cols))]].boxplot()\n"
-                "        plt.title('Box Plot - Outlier Detection')\n"
-                "        plt.tight_layout()\n"
-                "```\n"
-                "EXECUTE the plan. DO NOT call plt.savefig() - tool saves automatically.\n\n"
-                "INSPECTOR MODE: If column not found, use num_cols list, fix, retry."
+                "from scipy.stats import skew\n"
+                "df = df_clean if df_clean is not None else df_raw\n"
+                "num_cols = ORIGINAL_NUMERIC_COLUMNS\n"
+                "cat_cols = ORIGINAL_CATEGORICAL_COLUMNS\n"
+                "\n"
+                "# Compute characteristics\n"
+                "skewness = {col: skew(df[col].dropna()) for col in num_cols if col in df.columns}\n"
+                "highly_skewed = [c for c,s in skewness.items() if abs(s) > 1]\n"
+                "binary_cols = [c for c in df.columns if df[c].nunique() == 2]\n"
+                "\n"
+                "# Find top correlations\n"
+                "if len(num_cols) >= 2:\n"
+                "    corr = df[num_cols].corr().abs()\n"
+                "    pairs = [(corr.loc[i,j],i,j) for i in num_cols for j in num_cols if i<j]\n"
+                "    top_corr = sorted(pairs, reverse=True)[:3]\n"
+                "    print(f'Top correlations: {top_corr}')\n"
+                "print(f'Highly skewed columns: {highly_skewed}')\n"
+                "print(f'Binary columns for grouping: {binary_cols}')\n"
+                "```\n\n"
+                "STEP 2 - CREATE CHARTS based on analysis:\n"
+                "- For each highly_skewed col: box plot (better than histogram)\n"
+                "- For non-skewed numeric: histogram with KDE\n"
+                "- For top correlated pairs (|r|>0.5): scatter plot with trend line\n"
+                "- If binary_cols exist: use as hue in scatter/violin plots\n"
+                "- Correlation heatmap: limit to top 10 cols by variance\n"
+                "- If cat_cols exist: grouped bar or violin plot\n\n"
+                "IMPORTANT: Use descriptive titles with column names. Example:\n"
+                "plt.title(f'Distribution of {col_name} (skewness: {skewness[col_name]:.2f})')\n\n"
+                "DO NOT call plt.savefig(). Create 3-5 insightful charts total."
             ),
-            expected_output="Charts created using dynamic column selection from codified plan.",
+            expected_output="Insightful charts selected based on data characteristics analysis.",
             agent=agents["visualizations"],
             async_execution=False,
         ),

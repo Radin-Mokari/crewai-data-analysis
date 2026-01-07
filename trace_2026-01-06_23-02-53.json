@@ -1,0 +1,2079 @@
+{
+  "trace": {
+    "freeplan_truncated": false,
+    "trace_id": "4a73fc6fd55833a621fa87518393662d",
+    "root_service_name": "agentops",
+    "root_span_name": "crewai.workflow",
+    "start_time": "2026-01-06T22:19:19.294686+00:00",
+    "end_time": "2026-01-06T22:19:37.957191+00:00",
+    "duration": 18662505600,
+    "span_count": 20,
+    "error_count": 0,
+    "tags": [
+      "crewai"
+    ],
+    "total_cost": 0
+  },
+  "spans": [
+    {
+      "freeplan_truncated": false,
+      "span_id": "e07f1427ed5b531a",
+      "parent_span_id": "5388519889d0441b",
+      "span_name": "crewai.workflow",
+      "span_kind": "Internal",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:19.294686+00:00",
+      "end_time": "2026-01-06T22:19:21.532230+00:00",
+      "duration": 2237544600,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "name": "Crew"
+          },
+          "span": {
+            "kind": "workflow"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "agents": [
+            {
+              "allow_delegation": "False",
+              "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Verify that df_raw exists and print DATASET_COLUMNS to confirm metadata is loaded. Do NOT reload any data. Just confirm the environment is ready.",
+              "cache": "True",
+              "goal": "Verify the Python environment and confirm df_raw and metadata variables are accessible.",
+              "id": "8464351d-ea99-476f-99f6-b06d5362f812",
+              "llm": "gemini-2.5-flash",
+              "max_iter": "25",
+              "role": "Python Environment Setup Specialist",
+              "tools": [
+                {
+                  "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                  "name": "python_stateful_executor"
+                }
+              ],
+              "verbose": "True"
+            }
+          ],
+          "crew": {
+            "after_kickoff_callbacks": "[]",
+            "before_kickoff_callbacks": "[]",
+            "cache": "True",
+            "execution_logs": "[]",
+            "id": "6f3560f6-795c-4482-8725-1aea4a4578ce",
+            "max_turns": "1",
+            "memory": "False",
+            "name": "crew",
+            "planning": "False",
+            "process": "Process.sequential",
+            "result": "Environment Check:\ndf_raw loaded: True\nShape: (1025, 14)\nColumns available: 14\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\nCategorical: []",
+            "security_config": "fingerprint=Fingerprint(metadata={})",
+            "share_crew": "False",
+            "tasks": [
+              {
+                "agent": "Python Environment Setup Specialist",
+                "agent_id": "8464351d-ea99-476f-99f6-b06d5362f812",
+                "async_execution": "False",
+                "description": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation.",
+                "expected_output": "Environment verification output showing df_raw and metadata are loaded.",
+                "human_input": "False",
+                "id": "0",
+                "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation.",
+                "output_format": "OutputFormat.RAW",
+                "raw": "Environment Check:\ndf_raw loaded: True\nShape: (1025, 14)\nColumns available: 14\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\nCategorical: []",
+                "status": "completed",
+                "summary": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is...",
+                "tools": [
+                  {
+                    "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                    "name": "python_stateful_executor"
+                  }
+                ]
+              }
+            ],
+            "tasks_output": "[TaskOutput(description='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Verify environment is ready.\\nCODE TO EXECUTE:\\n```\\nprint(\\'Environment Check:\\')\\nprint(f\\'df_raw loaded: {\"df_raw\" in dir()}\\')\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')\\n```\\nOutput ONLY this verification code. No conversation.', name='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Verify environment is ready.\\nCODE TO EXECUTE:\\n```\\nprint(\\'Environment Check:\\')\\nprint(f\\'df_raw loaded: {\"df_raw\" in dir()}\\')\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')\\n```\\nOutput ONLY this verification code. No conversation.', expected_output='Environment verification output showing df_raw and metadata are loaded.', summary='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Verify environment is...', raw=\"Environment Check:\\ndf_raw loaded: True\\nShape: (1025, 14)\\nColumns available: 14\\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical: []\", pydantic=None, json_dict=None, agent='Python Environment Setup Specialist', output_format=<OutputFormat.RAW: 'raw'>, messages=[{'role': 'system', 'content': 'You are Python Environment Setup Specialist. You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Verify that df_raw exists and print DATASET_COLUMNS to confirm metadata is loaded. Do NOT reload any data. Just confirm the environment is ready.\\nYour personal goal is: Verify the Python environment and confirm df_raw and metadata variables are accessible.\\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\\n\\nTool Name: python_stateful_executor\\nTool Arguments: {\\'code\\': {\\'description\\': None, \\'type\\': \\'str\\'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\\n\\nIMPORTANT: Use the following format in your response:\\n\\n```\\nThought: you should always think about what to do\\nAction: the action to take, only one name of [python_stateful_executor], just the name, exactly as it\\'s written.\\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\\nObservation: the result of the action\\n```\\n\\nOnce all necessary information is gathered, return the following format:\\n\\n```\\nThought: I now know the final answer\\nFinal Answer: the final answer to the original input question\\n```'}, {'role': 'user', 'content': '\\nCurrent Task: CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Verify environment is ready.\\nCODE TO EXECUTE:\\n```\\nprint(\\'Environment Check:\\')\\nprint(f\\'df_raw loaded: {\"df_raw\" in dir()}\\')\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')\\n```\\nOutput ONLY this verification code. No conversation.\\n\\nThis is the expected criteria for your final answer: Environment verification output showing df_raw and metadata are loaded.\\nyou MUST return the actual complete content as the final answer, not a summary.\\n\\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\\n\\nThought:'}, {'role': 'assistant', 'content': 'Action: python_stateful_executor\\nAction Input: {\"code\": \"print(\\'Environment Check:\\')\\\\nprint(f\\'df_raw loaded: {\\\\\"df_raw\\\\\" in dir()}\\')\\\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')\"}\\nObservation: {\"success\": true, \"stdout\": \"Environment Check:\\\\ndf_raw loaded: True\\\\nShape: (1025, 14)\\\\nColumns available: 14\\\\nNumeric: [\\'age\\', \\'sex\\', \\'cp\\', \\'trestbps\\', \\'chol\\', \\'fbs\\', \\'restecg\\', \\'thalach\\', \\'exang\\', \\'oldpeak\\', \\'slope\\', \\'ca\\', \\'thal\\', \\'target\\']\\\\nCategorical: []\\\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}'}, {'role': 'assistant', 'content': \"\\nThought: I now know the final answer\\nFinal Answer: Environment Check:\\ndf_raw loaded: True\\nShape: (1025, 14)\\nColumns available: 14\\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical: []\"}])]",
+            "token_efficiency": "0.1360",
+            "type": "crewai.crew",
+            "verbose": "True"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "system": "crewai",
+          "usage": {
+            "completion_tokens": "206",
+            "prompt_tokens": "1515",
+            "total_tokens": "1721"
+          }
+        },
+        "llm": {
+          "token_efficiency": "0.1360"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": {
+        "total_tokens": 1721,
+        "prompt_tokens": 1515,
+        "completion_tokens": 206,
+        "cache_read_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "success_tokens": 1721,
+        "fail_tokens": 0,
+        "indeterminate_tokens": 0,
+        "prompt_cost": "0.0000000",
+        "completion_cost": "0.0000000",
+        "total_cost": "0.0000000"
+      }
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "5dfa1d2b98996679",
+      "parent_span_id": "e07f1427ed5b531a",
+      "span_name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation..task",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:19.308013+00:00",
+      "end_time": "2026-01-06T22:19:21.516737+00:00",
+      "duration": 2208724600,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "input": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation.",
+            "name": "Task",
+            "output": "Environment Check:\ndf_raw loaded: True\nShape: (1025, 14)\nColumns available: 14\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\nCategorical: []"
+          },
+          "span": {
+            "kind": "workflow.step"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "task": {
+            "agent": "Python Environment Setup Specialist",
+            "expected_output": "Environment verification output showing df_raw and metadata are loaded.",
+            "human_input": "False",
+            "id": "b1bd52b9-eec1-48a1-843c-171183110456",
+            "input": "NOT_SPECIFIED",
+            "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation.",
+            "processed_by_agents": "set()",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "type": "task"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "from_agent": "8464351d-ea99-476f-99f6-b06d5362f812",
+        "gen_ai": {
+          "request": {
+            "tools": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ]
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "ced70b892fa2fa96",
+      "parent_span_id": "5dfa1d2b98996679",
+      "span_name": "Python Environment Setup Specialist.agent",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:19.310013+00:00",
+      "end_time": "2026-01-06T22:19:21.516737+00:00",
+      "duration": 2206724800,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agent": {
+          "id": "8464351d-ea99-476f-99f6-b06d5362f812",
+          "models": "gemini-2.5-flash",
+          "reasoning": "False",
+          "role": "Python Environment Setup Specialist",
+          "tools": "[{\"name\": \"python_stateful_executor\", \"description\": \"Tool Name: python_stateful_executor\\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\"}]"
+        },
+        "agentops": {
+          "entity": {
+            "input": "Verify the Python environment and confirm df_raw and metadata variables are accessible.",
+            "name": "Agent"
+          },
+          "span": {
+            "kind": "agent"
+          }
+        },
+        "crewai": {
+          "agent": {
+            "allow_code_execution": "False",
+            "allow_delegation": "False",
+            "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Verify that df_raw exists and print DATASET_COLUMNS to confirm metadata is loaded. Do NOT reload any data. Just confirm the environment is ready.",
+            "cache": "True",
+            "goal": "Verify the Python environment and confirm df_raw and metadata variables are accessible.",
+            "llm": "gemini-2.5-flash",
+            "max_retry_limit": "2",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "tool_execution": [
+              {
+                "name": "python_stateful_executor",
+                "parameters": "{'code': 'print(\\'Environment Check:\\')\\nprint(f\\'df_raw loaded: {\"df_raw\" in dir()}\\')\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')'}",
+                "result": "{\"success\": true, \"stdout\": \"Environment Check:\\ndf_raw loaded: True\\nShape: (1025, 14)\\nColumns available: 14\\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical: []\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+                "status": "success"
+              }
+            ]
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "request": {
+            "model": "gemini-2.5-flash"
+          },
+          "response": {
+            "model": "gemini-2.5-flash"
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "011f46f9de427636",
+      "parent_span_id": "ced70b892fa2fa96",
+      "span_name": "python_stateful_executor.tool_usage",
+      "span_kind": "Internal",
+      "span_type": "tool",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:20.483886+00:00",
+      "end_time": "2026-01-06T22:19:20.489497+00:00",
+      "duration": 5611200,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "span": {
+            "kind": "tool.usage"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        },
+        "tool": {
+          "name": "python_stateful_executor",
+          "parameters": "{'code': 'print(\\'Environment Check:\\')\\nprint(f\\'df_raw loaded: {\"df_raw\" in dir()}\\')\\nprint(f\\'Shape: {DATASET_SHAPE}\\')\\nprint(f\\'Columns available: {len(DATASET_COLUMNS)}\\')\\nprint(f\\'Numeric: {NUMERIC_COLUMNS}\\')\\nprint(f\\'Categorical: {CATEGORICAL_COLUMNS}\\')'}",
+          "result": "{\"success\": true, \"stdout\": \"Environment Check:\\ndf_raw loaded: True\\nShape: (1025, 14)\\nColumns available: 14\\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical: []\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+          "status": "success"
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "6e801638e741701d",
+      "parent_span_id": "5388519889d0441b",
+      "span_name": "crewai.workflow",
+      "span_kind": "Internal",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:22.526415+00:00",
+      "end_time": "2026-01-06T22:19:26.096231+00:00",
+      "duration": 3569816700,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "name": "Crew"
+          },
+          "span": {
+            "kind": "workflow"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "agents": [
+            {
+              "allow_delegation": "False",
+              "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Print df_raw.shape, use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to describe the schema. Show df_raw.head(3) and df_raw.dtypes. Do NOT call read_csv.",
+              "cache": "True",
+              "goal": "Summarise df_raw structure using pre-loaded metadata variables.",
+              "id": "3de34e0b-3e10-497a-ba67-a23fe6dc0e9f",
+              "llm": "gemini-2.5-flash",
+              "max_iter": "25",
+              "role": "Data Structure Summariser",
+              "tools": [
+                {
+                  "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                  "name": "python_stateful_executor"
+                }
+              ],
+              "verbose": "True"
+            }
+          ],
+          "crew": {
+            "after_kickoff_callbacks": "[]",
+            "before_kickoff_callbacks": "[]",
+            "cache": "True",
+            "execution_logs": "[]",
+            "id": "2784e63f-62a6-48f9-97f1-5f8bad2f0229",
+            "max_turns": "1",
+            "memory": "False",
+            "name": "crew",
+            "planning": "False",
+            "process": "Process.sequential",
+            "result": "The raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable.",
+            "security_config": "fingerprint=Fingerprint(metadata={})",
+            "share_crew": "False",
+            "tasks": [
+              {
+                "agent": "Data Structure Summariser",
+                "agent_id": "3de34e0b-3e10-497a-ba67-a23fe6dc0e9f",
+                "async_execution": "False",
+                "description": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only.",
+                "expected_output": "Structured summary of df_raw using metadata variables.",
+                "human_input": "False",
+                "id": "0",
+                "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only.",
+                "output_format": "OutputFormat.RAW",
+                "raw": "The raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable.",
+                "status": "completed",
+                "summary": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure...",
+                "tools": [
+                  {
+                    "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                    "name": "python_stateful_executor"
+                  }
+                ]
+              }
+            ],
+            "tasks_output": "[TaskOutput(description=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Summarize df_raw structure using metadata variables.\\nREQUIRED OUTPUT (as Python code):\\n1. print(f'Shape: {df_raw.shape}')\\n2. print(f'Columns: {DATASET_COLUMNS}')\\n3. print(df_raw.dtypes)\\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\\n5. print(df_raw.head(3))\\nDo NOT reload data. Use existing variables only.\", name=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Summarize df_raw structure using metadata variables.\\nREQUIRED OUTPUT (as Python code):\\n1. print(f'Shape: {df_raw.shape}')\\n2. print(f'Columns: {DATASET_COLUMNS}')\\n3. print(df_raw.dtypes)\\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\\n5. print(df_raw.head(3))\\nDo NOT reload data. Use existing variables only.\", expected_output='Structured summary of df_raw using metadata variables.', summary='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Summarize df_raw structure...', raw='The raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable.', pydantic=None, json_dict=None, agent='Data Structure Summariser', output_format=<OutputFormat.RAW: 'raw'>, messages=[{'role': 'system', 'content': 'You are Data Structure Summariser. You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Print df_raw.shape, use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to describe the schema. Show df_raw.head(3) and df_raw.dtypes. Do NOT call read_csv.\\nYour personal goal is: Summarise df_raw structure using pre-loaded metadata variables.\\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\\n\\nTool Name: python_stateful_executor\\nTool Arguments: {\\'code\\': {\\'description\\': None, \\'type\\': \\'str\\'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\\n\\nIMPORTANT: Use the following format in your response:\\n\\n```\\nThought: you should always think about what to do\\nAction: the action to take, only one name of [python_stateful_executor], just the name, exactly as it\\'s written.\\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\\nObservation: the result of the action\\n```\\n\\nOnce all necessary information is gathered, return the following format:\\n\\n```\\nThought: I now know the final answer\\nFinal Answer: the final answer to the original input question\\n```'}, {'role': 'user', 'content': \"\\nCurrent Task: CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Summarize df_raw structure using metadata variables.\\nREQUIRED OUTPUT (as Python code):\\n1. print(f'Shape: {df_raw.shape}')\\n2. print(f'Columns: {DATASET_COLUMNS}')\\n3. print(df_raw.dtypes)\\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\\n5. print(df_raw.head(3))\\nDo NOT reload data. Use existing variables only.\\n\\nThis is the expected criteria for your final answer: Structured summary of df_raw using metadata variables.\\nyou MUST return the actual complete content as the final answer, not a summary.\\n\\nThis is the context you're working with:\\nEnvironment Check:\\ndf_raw loaded: True\\nShape: (1025, 14)\\nColumns available: 14\\nNumeric: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical: []\\n\\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\\n\\nThought:\"}, {'role': 'assistant', 'content': 'Action: python_stateful_executor\\nAction Input: {\"code\": \"import pandas as pd\\\\n\\\\nDATASET_COLUMNS = df_raw.columns.tolist()\\\\n\\\\nprint(f\\'Shape: {df_raw.shape}\\')\\\\nprint(f\\'Columns: {DATASET_COLUMNS}\\')\\\\nprint(\\'\\\\\\\\nNumeric Columns:\\', NUMERIC_COLUMNS)\\\\nprint(\\'Categorical Columns:\\', CATEGORICAL_COLUMNS)\\\\nprint(\\'\\\\\\\\nData Types:\\')\\\\nprint(df_raw.dtypes)\\\\nprint(\\'\\\\\\\\nMissing Values:\\')\\\\nprint(df_raw[DATASET_COLUMNS].isnull().sum())\\\\nprint(\\'\\\\\\\\nFirst 3 rows:\\')\\\\nprint(df_raw.head(3))\"}\\nObservation: {\"success\": true, \"stdout\": \"Shape: (1025, 14)\\\\nColumns: [\\'age\\', \\'sex\\', \\'cp\\', \\'trestbps\\', \\'chol\\', \\'fbs\\', \\'restecg\\', \\'thalach\\', \\'exang\\', \\'oldpeak\\', \\'slope\\', \\'ca\\', \\'thal\\', \\'target\\']\\\\n\\\\nNumeric Columns: [\\'age\\', \\'sex\\', \\'cp\\', \\'trestbps\\', \\'chol\\', \\'fbs\\', \\'restecg\\', \\'thalach\\', \\'exang\\', \\'oldpeak\\', \\'slope\\', \\'ca\\', \\'thal\\', \\'target\\']\\\\nCategorical Columns: []\\\\n\\\\nData Types:\\\\nage           int64\\\\nsex           int64\\\\ncp            int64\\\\ntrestbps      int64\\\\nchol          int64\\\\nfbs           int64\\\\nrestecg       int64\\\\nthalach       int64\\\\nexang         int64\\\\noldpeak     float64\\\\nslope         int64\\\\nca            int64\\\\nthal          int64\\\\ntarget        int64\\\\ndtype: object\\\\n\\\\nMissing Values:\\\\nage         0\\\\nsex         0\\\\ncp          0\\\\ntrestbps    0\\\\nchol        0\\\\nfbs         0\\\\nrestecg     0\\\\nthalach     0\\\\nexang       0\\\\noldpeak     0\\\\nslope       0\\\\nca          0\\\\nthal        0\\\\ntarget      0\\\\ndtype: int64\\\\n\\\\nFirst 3 rows:\\\\n   age  sex  cp  trestbps  chol  ...  oldpeak  slope  ca  thal  target\\\\n0   52    1   0       125   212  ...      1.0      2   2     3       0\\\\n1   53    1   0       140   203  ...      3.1      0   0     3       0\\\\n2   70    1   0       145   174  ...      2.6      0   0     3       0\\\\n\\\\n[3 rows x 14 columns]\\\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}'}, {'role': 'assistant', 'content': '\\nThought: I now know the final answer\\nFinal Answer: The raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable.'}])]",
+            "token_efficiency": "0.1234",
+            "type": "crewai.crew",
+            "verbose": "True"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "system": "crewai",
+          "usage": {
+            "completion_tokens": "454",
+            "prompt_tokens": "3678",
+            "total_tokens": "4132"
+          }
+        },
+        "llm": {
+          "token_efficiency": "0.1234"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": {
+        "total_tokens": 4132,
+        "prompt_tokens": 3678,
+        "completion_tokens": 454,
+        "cache_read_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "success_tokens": 4132,
+        "fail_tokens": 0,
+        "indeterminate_tokens": 0,
+        "prompt_cost": "0.0000000",
+        "completion_cost": "0.0000000",
+        "total_cost": "0.0000000"
+      }
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "3aef801eab975381",
+      "parent_span_id": "ef78428d803697df",
+      "span_name": "Data Structure Summariser.agent",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:22.537590+00:00",
+      "end_time": "2026-01-06T22:19:26.084904+00:00",
+      "duration": 3547314400,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agent": {
+          "id": "3de34e0b-3e10-497a-ba67-a23fe6dc0e9f",
+          "models": "gemini-2.5-flash",
+          "reasoning": "False",
+          "role": "Data Structure Summariser",
+          "tools": "[{\"name\": \"python_stateful_executor\", \"description\": \"Tool Name: python_stateful_executor\\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\"}]"
+        },
+        "agentops": {
+          "entity": {
+            "input": "Summarise df_raw structure using pre-loaded metadata variables.",
+            "name": "Agent"
+          },
+          "span": {
+            "kind": "agent"
+          }
+        },
+        "crewai": {
+          "agent": {
+            "allow_code_execution": "False",
+            "allow_delegation": "False",
+            "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Print df_raw.shape, use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to describe the schema. Show df_raw.head(3) and df_raw.dtypes. Do NOT call read_csv.",
+            "cache": "True",
+            "goal": "Summarise df_raw structure using pre-loaded metadata variables.",
+            "llm": "gemini-2.5-flash",
+            "max_retry_limit": "2",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "tool_execution": [
+              {
+                "name": "python_stateful_executor",
+                "parameters": "{'code': \"import pandas as pd\\n\\nDATASET_COLUMNS = df_raw.columns.tolist()\\n\\nprint(f'Shape: {df_raw.shape}')\\nprint(f'Columns: {DATASET_COLUMNS}')\\nprint('\\\\nNumeric Columns:', NUMERIC_COLUMNS)\\nprint('Categorical Columns:', CATEGORICAL_COLUMNS)\\nprint('\\\\nData Types:')\\nprint(df_raw.dtypes)\\nprint('\\\\nMissing Values:')\\nprint(df_raw[DATASET_COLUMNS].isnull().sum())\\nprint('\\\\nFirst 3 rows:')\\nprint(df_raw.head(3))\"}",
+                "result": "{\"success\": true, \"stdout\": \"Shape: (1025, 14)\\nColumns: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\n\\nNumeric Columns: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical Columns: []\\n\\nData Types:\\nage           int64\\nsex           int64\\ncp            int64\\ntrestbps      int64\\nchol          int64\\nfbs           int64\\nrestecg       int64\\nthalach       int64\\nexang         int64\\noldpeak     float64\\nslope         int64\\nca            int64\\nthal          int64\\ntarget        int64\\ndtype: object\\n\\nMissing Values:\\nage         0\\nsex         0\\ncp          0\\ntrestbps    0\\nchol        0\\nfbs         0\\nrestecg     0\\nthalach     0\\nexang       0\\noldpeak     0\\nslope       0\\nca          0\\nthal        0\\ntarget      0\\ndtype: int64\\n\\nFirst 3 rows:\\n   age  sex  cp  trestbps  chol  ...  oldpeak  slope  ca  thal  target\\n0   52    1   0       125   212  ...      1.0      2   2     3       0\\n1   53    1   0       140   203  ...      3.1      0   0     3       0\\n2   70    1   0       145   174  ...      2.6      0   0     3       0\\n\\n[3 rows x 14 columns]\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+                "status": "success"
+              }
+            ]
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "request": {
+            "model": "gemini-2.5-flash"
+          },
+          "response": {
+            "model": "gemini-2.5-flash"
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "ef78428d803697df",
+      "parent_span_id": "6e801638e741701d",
+      "span_name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only..task",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:22.537590+00:00",
+      "end_time": "2026-01-06T22:19:26.084904+00:00",
+      "duration": 3547314400,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "input": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only.",
+            "name": "Task",
+            "output": "The raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable."
+          },
+          "span": {
+            "kind": "workflow.step"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "task": {
+            "agent": "Data Structure Summariser",
+            "expected_output": "Structured summary of df_raw using metadata variables.",
+            "human_input": "False",
+            "id": "8cf69e1e-f8ae-4016-bc48-fab290abb829",
+            "input": "[Task(description=CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Verify environment is ready.\nCODE TO EXECUTE:\n```\nprint('Environment Check:')\nprint(f'df_raw loaded: {\"df_raw\" in dir()}')\nprint(f'Shape: {DATASET_SHAPE}')\nprint(f'Columns available: {len(DATASET_COLUMNS)}')\nprint(f'Numeric: {NUMERIC_COLUMNS}')\nprint(f'Categorical: {CATEGORICAL_COLUMNS}')\n```\nOutput ONLY this verification code. No conversation., expected_output=Environment verification output showing df_raw and metadata are loaded.)]",
+            "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only.",
+            "processed_by_agents": "set()",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "type": "task"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "from_agent": "3de34e0b-3e10-497a-ba67-a23fe6dc0e9f",
+        "gen_ai": {
+          "request": {
+            "tools": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ]
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "f71e24782550c858",
+      "parent_span_id": "3aef801eab975381",
+      "span_name": "python_stateful_executor.tool_usage",
+      "span_kind": "Internal",
+      "span_type": "tool",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:25.253768+00:00",
+      "end_time": "2026-01-06T22:19:25.292284+00:00",
+      "duration": 38516500,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "span": {
+            "kind": "tool.usage"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        },
+        "tool": {
+          "name": "python_stateful_executor",
+          "parameters": "{'code': \"import pandas as pd\\n\\nDATASET_COLUMNS = df_raw.columns.tolist()\\n\\nprint(f'Shape: {df_raw.shape}')\\nprint(f'Columns: {DATASET_COLUMNS}')\\nprint('\\\\nNumeric Columns:', NUMERIC_COLUMNS)\\nprint('Categorical Columns:', CATEGORICAL_COLUMNS)\\nprint('\\\\nData Types:')\\nprint(df_raw.dtypes)\\nprint('\\\\nMissing Values:')\\nprint(df_raw[DATASET_COLUMNS].isnull().sum())\\nprint('\\\\nFirst 3 rows:')\\nprint(df_raw.head(3))\"}",
+          "result": "{\"success\": true, \"stdout\": \"Shape: (1025, 14)\\nColumns: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\n\\nNumeric Columns: ['age', 'sex', 'cp', 'trestbps', 'chol', 'fbs', 'restecg', 'thalach', 'exang', 'oldpeak', 'slope', 'ca', 'thal', 'target']\\nCategorical Columns: []\\n\\nData Types:\\nage           int64\\nsex           int64\\ncp            int64\\ntrestbps      int64\\nchol          int64\\nfbs           int64\\nrestecg       int64\\nthalach       int64\\nexang         int64\\noldpeak     float64\\nslope         int64\\nca            int64\\nthal          int64\\ntarget        int64\\ndtype: object\\n\\nMissing Values:\\nage         0\\nsex         0\\ncp          0\\ntrestbps    0\\nchol        0\\nfbs         0\\nrestecg     0\\nthalach     0\\nexang       0\\noldpeak     0\\nslope       0\\nca          0\\nthal        0\\ntarget      0\\ndtype: int64\\n\\nFirst 3 rows:\\n   age  sex  cp  trestbps  chol  ...  oldpeak  slope  ca  thal  target\\n0   52    1   0       125   212  ...      1.0      2   2     3       0\\n1   53    1   0       140   203  ...      3.1      0   0     3       0\\n2   70    1   0       145   174  ...      2.6      0   0     3       0\\n\\n[3 rows x 14 columns]\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+          "status": "success"
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "a44cac17743b077b",
+      "parent_span_id": "5388519889d0441b",
+      "span_name": "crewai.workflow",
+      "span_kind": "Internal",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:26.113152+00:00",
+      "end_time": "2026-01-06T22:19:32.053505+00:00",
+      "duration": 5940353600,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "name": "Crew"
+          },
+          "span": {
+            "kind": "workflow"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "agents": [
+            {
+              "allow_delegation": "False",
+              "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to inspect data quality. Check missing values with df_raw[DATASET_COLUMNS].isnull().sum(). Check duplicates with df_raw.duplicated().sum(). Output bullet-point diagnostics.",
+              "cache": "True",
+              "goal": "Inspect df_raw for quality issues using dynamic column detection.",
+              "id": "ece3fb73-f64b-4b91-8adb-be3d468c0ff6",
+              "llm": "gemini-2.5-flash",
+              "max_iter": "25",
+              "role": "Data Inspection Analyst",
+              "tools": [
+                {
+                  "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                  "name": "python_stateful_executor"
+                }
+              ],
+              "verbose": "True"
+            }
+          ],
+          "crew": {
+            "after_kickoff_callbacks": "[]",
+            "before_kickoff_callbacks": "[]",
+            "cache": "True",
+            "execution_logs": "[]",
+            "id": "c042c380-e9b5-494a-be00-ce144636583e",
+            "max_turns": "1",
+            "memory": "False",
+            "name": "crew",
+            "planning": "False",
+            "process": "Process.sequential",
+            "result": "--- Numeric Columns Inspection ---\nColumn 'age': Min=29, Max=77, Nulls=0\nColumn 'sex': Min=0, Max=1, Nulls=0\nColumn 'cp': Min=0, Max=3, Nulls=0\nColumn 'trestbps': Min=94, Max=200, Nulls=0\nColumn 'chol': Min=126, Max=564, Nulls=0\nColumn 'fbs': Min=0, Max=1, Nulls=0\nColumn 'restecg': Min=0, Max=2, Nulls=0\nColumn 'thalach': Min=71, Max=202, Nulls=0\nColumn 'exang': Min=0, Max=1, Nulls=0\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\nColumn 'slope': Min=0, Max=2, Nulls=0\nColumn 'ca': Min=0, Max=4, Nulls=0\nColumn 'thal': Min=0, Max=3, Nulls=0\nColumn 'target': Min=0, Max=1, Nulls=0\n\n--- Categorical Columns Inspection ---\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\n\n--- Duplicate Rows Inspection ---\nDuplicate rows: 723\n\n--- Quality Issues Summary ---\n- Found 723 duplicate rows in the dataset.",
+            "security_config": "fingerprint=Fingerprint(metadata={})",
+            "share_crew": "False",
+            "tasks": [
+              {
+                "agent": "Data Inspection Analyst",
+                "agent_id": "ece3fb73-f64b-4b91-8adb-be3d468c0ff6",
+                "async_execution": "False",
+                "description": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.",
+                "expected_output": "Quality inspection report using dynamic column detection.",
+                "human_input": "False",
+                "id": "0",
+                "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.",
+                "output_format": "OutputFormat.RAW",
+                "raw": "--- Numeric Columns Inspection ---\nColumn 'age': Min=29, Max=77, Nulls=0\nColumn 'sex': Min=0, Max=1, Nulls=0\nColumn 'cp': Min=0, Max=3, Nulls=0\nColumn 'trestbps': Min=94, Max=200, Nulls=0\nColumn 'chol': Min=126, Max=564, Nulls=0\nColumn 'fbs': Min=0, Max=1, Nulls=0\nColumn 'restecg': Min=0, Max=2, Nulls=0\nColumn 'thalach': Min=71, Max=202, Nulls=0\nColumn 'exang': Min=0, Max=1, Nulls=0\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\nColumn 'slope': Min=0, Max=2, Nulls=0\nColumn 'ca': Min=0, Max=4, Nulls=0\nColumn 'thal': Min=0, Max=3, Nulls=0\nColumn 'target': Min=0, Max=1, Nulls=0\n\n--- Categorical Columns Inspection ---\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\n\n--- Duplicate Rows Inspection ---\nDuplicate rows: 723\n\n--- Quality Issues Summary ---\n- Found 723 duplicate rows in the dataset.",
+                "status": "completed",
+                "summary": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality...",
+                "tools": [
+                  {
+                    "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                    "name": "python_stateful_executor"
+                  }
+                ]
+              }
+            ],
+            "tasks_output": "[TaskOutput(description=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Inspect data quality using dynamic column references.\\nREQUIRED CHECKS:\\n1. For col in NUMERIC_COLUMNS: print min, max, null count\\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\\n4. Print 2-3 bullet points summarizing quality issues found.\\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.\", name=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Inspect data quality using dynamic column references.\\nREQUIRED CHECKS:\\n1. For col in NUMERIC_COLUMNS: print min, max, null count\\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\\n4. Print 2-3 bullet points summarizing quality issues found.\\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.\", expected_output='Quality inspection report using dynamic column detection.', summary='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Inspect data quality...', raw=\"--- Numeric Columns Inspection ---\\nColumn 'age': Min=29, Max=77, Nulls=0\\nColumn 'sex': Min=0, Max=1, Nulls=0\\nColumn 'cp': Min=0, Max=3, Nulls=0\\nColumn 'trestbps': Min=94, Max=200, Nulls=0\\nColumn 'chol': Min=126, Max=564, Nulls=0\\nColumn 'fbs': Min=0, Max=1, Nulls=0\\nColumn 'restecg': Min=0, Max=2, Nulls=0\\nColumn 'thalach': Min=71, Max=202, Nulls=0\\nColumn 'exang': Min=0, Max=1, Nulls=0\\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\\nColumn 'slope': Min=0, Max=2, Nulls=0\\nColumn 'ca': Min=0, Max=4, Nulls=0\\nColumn 'thal': Min=0, Max=3, Nulls=0\\nColumn 'target': Min=0, Max=1, Nulls=0\\n\\n--- Categorical Columns Inspection ---\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\n\\n--- Duplicate Rows Inspection ---\\nDuplicate rows: 723\\n\\n--- Quality Issues Summary ---\\n- Found 723 duplicate rows in the dataset.\", pydantic=None, json_dict=None, agent='Data Inspection Analyst', output_format=<OutputFormat.RAW: 'raw'>, messages=[{'role': 'system', 'content': 'You are Data Inspection Analyst. You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to inspect data quality. Check missing values with df_raw[DATASET_COLUMNS].isnull().sum(). Check duplicates with df_raw.duplicated().sum(). Output bullet-point diagnostics.\\nYour personal goal is: Inspect df_raw for quality issues using dynamic column detection.\\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\\n\\nTool Name: python_stateful_executor\\nTool Arguments: {\\'code\\': {\\'description\\': None, \\'type\\': \\'str\\'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\\n\\nIMPORTANT: Use the following format in your response:\\n\\n```\\nThought: you should always think about what to do\\nAction: the action to take, only one name of [python_stateful_executor], just the name, exactly as it\\'s written.\\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\\nObservation: the result of the action\\n```\\n\\nOnce all necessary information is gathered, return the following format:\\n\\n```\\nThought: I now know the final answer\\nFinal Answer: the final answer to the original input question\\n```'}, {'role': 'user', 'content': \"\\nCurrent Task: CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Inspect data quality using dynamic column references.\\nREQUIRED CHECKS:\\n1. For col in NUMERIC_COLUMNS: print min, max, null count\\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\\n4. Print 2-3 bullet points summarizing quality issues found.\\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.\\n\\nThis is the expected criteria for your final answer: Quality inspection report using dynamic column detection.\\nyou MUST return the actual complete content as the final answer, not a summary.\\n\\nThis is the context you're working with:\\nThe raw dataframe `df_raw` has a shape of (1025, 14), containing 14 columns. All columns are identified as numeric, with no categorical columns, and no missing values are present across the dataset. The first three rows show integer and float values, reflecting the numerical nature of all features, including the `target` variable.\\n\\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\\n\\nThought:\"}, {'role': 'assistant', 'content': 'Action: python_stateful_executor\\nAction Input: {\"code\": \"print(\\'--- Numeric Columns Inspection ---\\')\\\\nfor col in NUMERIC_COLUMNS:\\\\n    min_val = df_raw[col].min()\\\\n    max_val = df_raw[col].max()\\\\n    null_count = df_raw[col].isnull().sum()\\\\n    print(f\\\\\"Column \\'{col}\\': Min={min_val}, Max={max_val}, Nulls={null_count}\\\\\")\\\\n\\\\nprint(\\'\\\\\\\\n--- Categorical Columns Inspection ---\\')\\\\nif not CATEGORICAL_COLUMNS:\\\\n    print(\\\\\"No categorical columns found as per CATEGORICAL_COLUMNS list.\\\\\")\\\\nelse:\\\\n    for col in CATEGORICAL_COLUMNS:\\\\n        unique_count = df_raw[col].nunique()\\\\n        top_values = df_raw[col].value_counts().head(3).to_dict() # Get top 3 values\\\\n        print(f\\\\\"Column \\'{col}\\': Unique Count={unique_count}, Top Values={top_values}\\\\\")\\\\n\\\\nprint(f\\'\\\\\\\\n--- Duplicate Rows Inspection ---\\')\\\\nduplicate_rows_count = df_raw.duplicated().sum()\\\\nprint(f\\'Duplicate rows: {duplicate_rows_count}\\')\\\\n\\\\n\\\\n# Prepare summary\\\\nsummary_points = []\\\\nif duplicate_rows_count > 0:\\\\n    summary_points.append(f\\'- Found {duplicate_rows_count} duplicate rows in the dataset.\\')\\\\n\\\\nfor col in NUMERIC_COLUMNS:\\\\n    if df_raw[col].isnull().sum() > 0:\\\\n        summary_points.append(f\\'- Numeric column \\\\\\\\\\'{col}\\\\\\\\\\' has missing values.\\')\\\\n\\\\nfor col in CATEGORICAL_COLUMNS:\\\\n    if df_raw[col].isnull().sum() > 0:\\\\n        summary_points.append(f\\'- Categorical column \\\\\\\\\\'{col}\\\\\\\\\\' has missing values.\\')\\\\n\\\\nif not summary_points:\\\\n    summary_points.append(\\'- No significant data quality issues (missing values, duplicates) found.\\')\\\\n\\\\nprint(\\'\\\\\\\\n--- Quality Issues Summary ---\\')\\\\nfor point in summary_points:\\\\n    print(point)\\\\n\\\\n\\\\n\"}\\nObservation: {\"success\": true, \"stdout\": \"--- Numeric Columns Inspection ---\\\\nColumn \\'age\\': Min=29, Max=77, Nulls=0\\\\nColumn \\'sex\\': Min=0, Max=1, Nulls=0\\\\nColumn \\'cp\\': Min=0, Max=3, Nulls=0\\\\nColumn \\'trestbps\\': Min=94, Max=200, Nulls=0\\\\nColumn \\'chol\\': Min=126, Max=564, Nulls=0\\\\nColumn \\'fbs\\': Min=0, Max=1, Nulls=0\\\\nColumn \\'restecg\\': Min=0, Max=2, Nulls=0\\\\nColumn \\'thalach\\': Min=71, Max=202, Nulls=0\\\\nColumn \\'exang\\': Min=0, Max=1, Nulls=0\\\\nColumn \\'oldpeak\\': Min=0.0, Max=6.2, Nulls=0\\\\nColumn \\'slope\\': Min=0, Max=2, Nulls=0\\\\nColumn \\'ca\\': Min=0, Max=4, Nulls=0\\\\nColumn \\'thal\\': Min=0, Max=3, Nulls=0\\\\nColumn \\'target\\': Min=0, Max=1, Nulls=0\\\\n\\\\n--- Categorical Columns Inspection ---\\\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\\\n\\\\n--- Duplicate Rows Inspection ---\\\\nDuplicate rows: 723\\\\n\\\\n--- Quality Issues Summary ---\\\\n- Found 723 duplicate rows in the dataset.\\\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}'}, {'role': 'assistant', 'content': \"\\nThought: I have performed all the required checks: inspecting numeric columns for min/max/nulls, categorical columns for unique/top values, and checking for duplicate rows. I have also generated a summary of the quality issues found. The output clearly shows the numeric column statistics, indicates no categorical columns were found based on `CATEGORICAL_COLUMNS`, and identifies a significant number of duplicate rows.\\nFinal Answer: --- Numeric Columns Inspection ---\\nColumn 'age': Min=29, Max=77, Nulls=0\\nColumn 'sex': Min=0, Max=1, Nulls=0\\nColumn 'cp': Min=0, Max=3, Nulls=0\\nColumn 'trestbps': Min=94, Max=200, Nulls=0\\nColumn 'chol': Min=126, Max=564, Nulls=0\\nColumn 'fbs': Min=0, Max=1, Nulls=0\\nColumn 'restecg': Min=0, Max=2, Nulls=0\\nColumn 'thalach': Min=71, Max=202, Nulls=0\\nColumn 'exang': Min=0, Max=1, Nulls=0\\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\\nColumn 'slope': Min=0, Max=2, Nulls=0\\nColumn 'ca': Min=0, Max=4, Nulls=0\\nColumn 'thal': Min=0, Max=3, Nulls=0\\nColumn 'target': Min=0, Max=1, Nulls=0\\n\\n--- Categorical Columns Inspection ---\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\n\\n--- Duplicate Rows Inspection ---\\nDuplicate rows: 723\\n\\n--- Quality Issues Summary ---\\n- Found 723 duplicate rows in the dataset.\"}])]",
+            "token_efficiency": "0.3861",
+            "type": "crewai.crew",
+            "verbose": "True"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "system": "crewai",
+          "usage": {
+            "completion_tokens": "912",
+            "prompt_tokens": "2362",
+            "total_tokens": "3274"
+          }
+        },
+        "llm": {
+          "token_efficiency": "0.3861"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": {
+        "total_tokens": 3274,
+        "prompt_tokens": 2362,
+        "completion_tokens": 912,
+        "cache_read_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "success_tokens": 3274,
+        "fail_tokens": 0,
+        "indeterminate_tokens": 0,
+        "prompt_cost": "0.0000000",
+        "completion_cost": "0.0000000",
+        "total_cost": "0.0000000"
+      }
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "b6672de3f5120a67",
+      "parent_span_id": "0229545cef2368e5",
+      "span_name": "Data Inspection Analyst.agent",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:26.122035+00:00",
+      "end_time": "2026-01-06T22:19:32.040592+00:00",
+      "duration": 5918557800,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agent": {
+          "id": "ece3fb73-f64b-4b91-8adb-be3d468c0ff6",
+          "models": "gemini-2.5-flash",
+          "reasoning": "False",
+          "role": "Data Inspection Analyst",
+          "tools": "[{\"name\": \"python_stateful_executor\", \"description\": \"Tool Name: python_stateful_executor\\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\"}]"
+        },
+        "agentops": {
+          "entity": {
+            "input": "Inspect df_raw for quality issues using dynamic column detection.",
+            "name": "Agent"
+          },
+          "span": {
+            "kind": "agent"
+          }
+        },
+        "crewai": {
+          "agent": {
+            "allow_code_execution": "False",
+            "allow_delegation": "False",
+            "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Use NUMERIC_COLUMNS and CATEGORICAL_COLUMNS to inspect data quality. Check missing values with df_raw[DATASET_COLUMNS].isnull().sum(). Check duplicates with df_raw.duplicated().sum(). Output bullet-point diagnostics.",
+            "cache": "True",
+            "goal": "Inspect df_raw for quality issues using dynamic column detection.",
+            "llm": "gemini-2.5-flash",
+            "max_retry_limit": "2",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "tool_execution": [
+              {
+                "name": "python_stateful_executor",
+                "parameters": "{'code': 'print(\\'--- Numeric Columns Inspection ---\\')\\nfor col in NUMERIC_COLUMNS:\\n    min_val = df_raw[col].min()\\n    max_val = df_raw[col].max()\\n    null_count = df_raw[col].isnull().sum()\\n    print(f\"Column \\'{col}\\': Min={min_val}, Max={max_val}, Nulls={null_count}\")\\n\\nprint(\\'\\\\n--- Categorical Columns Inspection ---\\')\\nif not CATEGORICAL_COLUMNS:\\n    print(\"No categorical columns found as per CATEGORICAL_COLUMNS list.\")\\nelse:\\n    for col in CATEGORICAL_COLUMNS:\\n        unique_count = df_raw[col].nunique()\\n        top_values = df_raw[col].value_counts().head(3).to_dict() # Get top 3 values\\n        print(f\"Column \\'{col}\\': Unique Count={unique_count}, Top Values={top_values}\")\\n\\nprint(f\\'\\\\n--- Duplicate Rows Inspection ---\\')\\nduplicate_rows_count = df_raw.duplicated().sum()\\nprint(f\\'Duplicate rows: {duplicate_rows_count}\\')\\n\\n\\n# Prepare summary\\nsummary_points = []\\nif duplicate_rows_count > 0:\\n    summary_points.append(f\\'- Found {duplicate_rows_count} duplicate rows in the dataset.\\')\\n\\nfor col in NUMERIC_COLUMNS:\\n    if df_raw[col].isnull().sum() > 0:\\n        summary_points.append(f\\'- Numeric column \\\\\\'{col}\\\\\\' has missing values.\\')\\n\\nfor col in CATEGORICAL_COLUMNS:\\n    if df_raw[col].isnull().sum() > 0:\\n        summary_points.append(f\\'- Categorical column \\\\\\'{col}\\\\\\' has missing values.\\')\\n\\nif not summary_points:\\n    summary_points.append(\\'- No significant data quality issues (missing values, duplicates) found.\\')\\n\\nprint(\\'\\\\n--- Quality Issues Summary ---\\')\\nfor point in summary_points:\\n    print(point)\\n\\n\\n'}",
+                "result": "{\"success\": true, \"stdout\": \"--- Numeric Columns Inspection ---\\nColumn 'age': Min=29, Max=77, Nulls=0\\nColumn 'sex': Min=0, Max=1, Nulls=0\\nColumn 'cp': Min=0, Max=3, Nulls=0\\nColumn 'trestbps': Min=94, Max=200, Nulls=0\\nColumn 'chol': Min=126, Max=564, Nulls=0\\nColumn 'fbs': Min=0, Max=1, Nulls=0\\nColumn 'restecg': Min=0, Max=2, Nulls=0\\nColumn 'thalach': Min=71, Max=202, Nulls=0\\nColumn 'exang': Min=0, Max=1, Nulls=0\\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\\nColumn 'slope': Min=0, Max=2, Nulls=0\\nColumn 'ca': Min=0, Max=4, Nulls=0\\nColumn 'thal': Min=0, Max=3, Nulls=0\\nColumn 'target': Min=0, Max=1, Nulls=0\\n\\n--- Categorical Columns Inspection ---\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\n\\n--- Duplicate Rows Inspection ---\\nDuplicate rows: 723\\n\\n--- Quality Issues Summary ---\\n- Found 723 duplicate rows in the dataset.\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+                "status": "success"
+              }
+            ]
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "request": {
+            "model": "gemini-2.5-flash"
+          },
+          "response": {
+            "model": "gemini-2.5-flash"
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "0229545cef2368e5",
+      "parent_span_id": "a44cac17743b077b",
+      "span_name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names..task",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:26.122035+00:00",
+      "end_time": "2026-01-06T22:19:32.040592+00:00",
+      "duration": 5918557800,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "input": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.",
+            "name": "Task",
+            "output": "--- Numeric Columns Inspection ---\nColumn 'age': Min=29, Max=77, Nulls=0\nColumn 'sex': Min=0, Max=1, Nulls=0\nColumn 'cp': Min=0, Max=3, Nulls=0\nColumn 'trestbps': Min=94, Max=200, Nulls=0\nColumn 'chol': Min=126, Max=564, Nulls=0\nColumn 'fbs': Min=0, Max=1, Nulls=0\nColumn 'restecg': Min=0, Max=2, Nulls=0\nColumn 'thalach': Min=71, Max=202, Nulls=0\nColumn 'exang': Min=0, Max=1, Nulls=0\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\nColumn 'slope': Min=0, Max=2, Nulls=0\nColumn 'ca': Min=0, Max=4, Nulls=0\nColumn 'thal': Min=0, Max=3, Nulls=0\nColumn 'target': Min=0, Max=1, Nulls=0\n\n--- Categorical Columns Inspection ---\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\n\n--- Duplicate Rows Inspection ---\nDuplicate rows: 723\n\n--- Quality Issues Summary ---\n- Found 723 duplicate rows in the dataset."
+          },
+          "span": {
+            "kind": "workflow.step"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "task": {
+            "agent": "Data Inspection Analyst",
+            "expected_output": "Quality inspection report using dynamic column detection.",
+            "human_input": "False",
+            "id": "99a2f77e-28f4-4f80-950a-1e149a5286eb",
+            "input": "[Task(description=CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Summarize df_raw structure using metadata variables.\nREQUIRED OUTPUT (as Python code):\n1. print(f'Shape: {df_raw.shape}')\n2. print(f'Columns: {DATASET_COLUMNS}')\n3. print(df_raw.dtypes)\n4. print(df_raw[DATASET_COLUMNS].isnull().sum())\n5. print(df_raw.head(3))\nDo NOT reload data. Use existing variables only., expected_output=Structured summary of df_raw using metadata variables.)]",
+            "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names.",
+            "processed_by_agents": "set()",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "type": "task"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "from_agent": "ece3fb73-f64b-4b91-8adb-be3d468c0ff6",
+        "gen_ai": {
+          "request": {
+            "tools": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ]
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "f266f46c4bfae28f",
+      "parent_span_id": "b6672de3f5120a67",
+      "span_name": "python_stateful_executor.tool_usage",
+      "span_kind": "Internal",
+      "span_type": "tool",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:29.967232+00:00",
+      "end_time": "2026-01-06T22:19:29.979315+00:00",
+      "duration": 12083700,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "span": {
+            "kind": "tool.usage"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        },
+        "tool": {
+          "name": "python_stateful_executor",
+          "parameters": "{'code': 'print(\\'--- Numeric Columns Inspection ---\\')\\nfor col in NUMERIC_COLUMNS:\\n    min_val = df_raw[col].min()\\n    max_val = df_raw[col].max()\\n    null_count = df_raw[col].isnull().sum()\\n    print(f\"Column \\'{col}\\': Min={min_val}, Max={max_val}, Nulls={null_count}\")\\n\\nprint(\\'\\\\n--- Categorical Columns Inspection ---\\')\\nif not CATEGORICAL_COLUMNS:\\n    print(\"No categorical columns found as per CATEGORICAL_COLUMNS list.\")\\nelse:\\n    for col in CATEGORICAL_COLUMNS:\\n        unique_count = df_raw[col].nunique()\\n        top_values = df_raw[col].value_counts().head(3).to_dict() # Get top 3 values\\n        print(f\"Column \\'{col}\\': Unique Count={unique_count}, Top Values={top_values}\")\\n\\nprint(f\\'\\\\n--- Duplicate Rows Inspection ---\\')\\nduplicate_rows_count = df_raw.duplicated().sum()\\nprint(f\\'Duplicate rows: {duplicate_rows_count}\\')\\n\\n\\n# Prepare summary\\nsummary_points = []\\nif duplicate_rows_count > 0:\\n    summary_points.append(f\\'- Found {duplicate_rows_count} duplicate rows in the dataset.\\')\\n\\nfor col in NUMERIC_COLUMNS:\\n    if df_raw[col].isnull().sum() > 0:\\n        summary_points.append(f\\'- Numeric column \\\\\\'{col}\\\\\\' has missing values.\\')\\n\\nfor col in CATEGORICAL_COLUMNS:\\n    if df_raw[col].isnull().sum() > 0:\\n        summary_points.append(f\\'- Categorical column \\\\\\'{col}\\\\\\' has missing values.\\')\\n\\nif not summary_points:\\n    summary_points.append(\\'- No significant data quality issues (missing values, duplicates) found.\\')\\n\\nprint(\\'\\\\n--- Quality Issues Summary ---\\')\\nfor point in summary_points:\\n    print(point)\\n\\n\\n'}",
+          "result": "{\"success\": true, \"stdout\": \"--- Numeric Columns Inspection ---\\nColumn 'age': Min=29, Max=77, Nulls=0\\nColumn 'sex': Min=0, Max=1, Nulls=0\\nColumn 'cp': Min=0, Max=3, Nulls=0\\nColumn 'trestbps': Min=94, Max=200, Nulls=0\\nColumn 'chol': Min=126, Max=564, Nulls=0\\nColumn 'fbs': Min=0, Max=1, Nulls=0\\nColumn 'restecg': Min=0, Max=2, Nulls=0\\nColumn 'thalach': Min=71, Max=202, Nulls=0\\nColumn 'exang': Min=0, Max=1, Nulls=0\\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\\nColumn 'slope': Min=0, Max=2, Nulls=0\\nColumn 'ca': Min=0, Max=4, Nulls=0\\nColumn 'thal': Min=0, Max=3, Nulls=0\\nColumn 'target': Min=0, Max=1, Nulls=0\\n\\n--- Categorical Columns Inspection ---\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\n\\n--- Duplicate Rows Inspection ---\\nDuplicate rows: 723\\n\\n--- Quality Issues Summary ---\\n- Found 723 duplicate rows in the dataset.\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+          "status": "success"
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "f9b0d66147806711",
+      "parent_span_id": "5388519889d0441b",
+      "span_name": "crewai.workflow",
+      "span_kind": "Internal",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:32.077976+00:00",
+      "end_time": "2026-01-06T22:19:34.141941+00:00",
+      "duration": 2063965100,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "name": "Crew"
+          },
+          "span": {
+            "kind": "workflow"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "agents": [
+            {
+              "allow_delegation": "False",
+              "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Validate df_raw dynamically - iterate over NUMERIC_COLUMNS for range checks, CATEGORICAL_COLUMNS for cardinality checks. Store results in validation_report dict. Do NOT hardcode column names - use the metadata variables.",
+              "cache": "True",
+              "goal": "Run validation rules on df_raw using dynamic columns and store in validation_report.",
+              "id": "4016f56f-d9fb-40ce-9ced-40b218842b77",
+              "llm": "gemini-2.5-flash",
+              "max_iter": "25",
+              "role": "Data Validation Specialist",
+              "tools": [
+                {
+                  "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                  "name": "python_stateful_executor"
+                }
+              ],
+              "verbose": "True"
+            }
+          ],
+          "crew": {
+            "after_kickoff_callbacks": "[]",
+            "before_kickoff_callbacks": "[]",
+            "cache": "True",
+            "execution_logs": "[]",
+            "id": "8a729b0d-4387-4cb3-b2be-370823ecb7a8",
+            "max_turns": "1",
+            "memory": "False",
+            "name": "crew",
+            "planning": "False",
+            "process": "Process.sequential",
+            "result": "The `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed.",
+            "security_config": "fingerprint=Fingerprint(metadata={})",
+            "share_crew": "False",
+            "tasks": [
+              {
+                "agent": "Data Validation Specialist",
+                "agent_id": "4016f56f-d9fb-40ce-9ced-40b218842b77",
+                "async_execution": "False",
+                "description": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames.",
+                "expected_output": "validation_report dict populated with dynamic validation results.",
+                "human_input": "False",
+                "id": "0",
+                "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames.",
+                "output_format": "OutputFormat.RAW",
+                "raw": "The `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed.",
+                "status": "completed",
+                "summary": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and...",
+                "tools": [
+                  {
+                    "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                    "name": "python_stateful_executor"
+                  }
+                ]
+              }
+            ],
+            "tasks_output": "[TaskOutput(description=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Validate df_raw and populate validation_report dict.\\nVALIDATION RULES (iterate dynamically):\\n```\\nvalidation_report = {}\\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\\nfor col in NUMERIC_COLUMNS:\\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\\nfor col in CATEGORICAL_COLUMNS:\\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\\n```\\nPrint summary of validation_report. Do NOT create new DataFrames.\", name=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Validate df_raw and populate validation_report dict.\\nVALIDATION RULES (iterate dynamically):\\n```\\nvalidation_report = {}\\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\\nfor col in NUMERIC_COLUMNS:\\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\\nfor col in CATEGORICAL_COLUMNS:\\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\\n```\\nPrint summary of validation_report. Do NOT create new DataFrames.\", expected_output='validation_report dict populated with dynamic validation results.', summary='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Validate df_raw and...', raw='The `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed.', pydantic=None, json_dict=None, agent='Data Validation Specialist', output_format=<OutputFormat.RAW: 'raw'>, messages=[{'role': 'system', 'content': 'You are Data Validation Specialist. You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Validate df_raw dynamically - iterate over NUMERIC_COLUMNS for range checks, CATEGORICAL_COLUMNS for cardinality checks. Store results in validation_report dict. Do NOT hardcode column names - use the metadata variables.\\nYour personal goal is: Run validation rules on df_raw using dynamic columns and store in validation_report.\\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\\n\\nTool Name: python_stateful_executor\\nTool Arguments: {\\'code\\': {\\'description\\': None, \\'type\\': \\'str\\'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\\n\\nIMPORTANT: Use the following format in your response:\\n\\n```\\nThought: you should always think about what to do\\nAction: the action to take, only one name of [python_stateful_executor], just the name, exactly as it\\'s written.\\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\\nObservation: the result of the action\\n```\\n\\nOnce all necessary information is gathered, return the following format:\\n\\n```\\nThought: I now know the final answer\\nFinal Answer: the final answer to the original input question\\n```'}, {'role': 'user', 'content': \"\\nCurrent Task: CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Validate df_raw and populate validation_report dict.\\nVALIDATION RULES (iterate dynamically):\\n```\\nvalidation_report = {}\\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\\nfor col in NUMERIC_COLUMNS:\\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\\nfor col in CATEGORICAL_COLUMNS:\\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\\n```\\nPrint summary of validation_report. Do NOT create new DataFrames.\\n\\nThis is the expected criteria for your final answer: validation_report dict populated with dynamic validation results.\\nyou MUST return the actual complete content as the final answer, not a summary.\\n\\nThis is the context you're working with:\\n--- Numeric Columns Inspection ---\\nColumn 'age': Min=29, Max=77, Nulls=0\\nColumn 'sex': Min=0, Max=1, Nulls=0\\nColumn 'cp': Min=0, Max=3, Nulls=0\\nColumn 'trestbps': Min=94, Max=200, Nulls=0\\nColumn 'chol': Min=126, Max=564, Nulls=0\\nColumn 'fbs': Min=0, Max=1, Nulls=0\\nColumn 'restecg': Min=0, Max=2, Nulls=0\\nColumn 'thalach': Min=71, Max=202, Nulls=0\\nColumn 'exang': Min=0, Max=1, Nulls=0\\nColumn 'oldpeak': Min=0.0, Max=6.2, Nulls=0\\nColumn 'slope': Min=0, Max=2, Nulls=0\\nColumn 'ca': Min=0, Max=4, Nulls=0\\nColumn 'thal': Min=0, Max=3, Nulls=0\\nColumn 'target': Min=0, Max=1, Nulls=0\\n\\n--- Categorical Columns Inspection ---\\nNo categorical columns found as per CATEGORICAL_COLUMNS list.\\n\\n--- Duplicate Rows Inspection ---\\nDuplicate rows: 723\\n\\n--- Quality Issues Summary ---\\n- Found 723 duplicate rows in the dataset.\\n\\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\\n\\nThought:\"}, {'role': 'assistant', 'content': 'Action: python_stateful_executor\\nAction Input: {\"code\": \"validation_report = {}\\\\nvalidation_report[\\'missing\\'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\\\nvalidation_report[\\'duplicates\\'] = int(df_raw.duplicated().sum())\\\\nfor col in NUMERIC_COLUMNS:\\\\n    validation_report[f\\'{col}_range\\'] = (df_raw[col].min(), df_raw[col].max())\\\\nfor col in CATEGORICAL_COLUMNS:\\\\n    validation_report[f\\'{col}_unique\\'] = df_raw[col].nunique()\\\\nprint(validation_report)\"}\\nObservation: {\"success\": true, \"stdout\": \"{\\'missing\\': {\\'age\\': 0, \\'sex\\': 0, \\'cp\\': 0, \\'trestbps\\': 0, \\'chol\\': 0, \\'fbs\\': 0, \\'restecg\\': 0, \\'thalach\\': 0, \\'exang\\': 0, \\'oldpeak\\': 0, \\'slope\\': 0, \\'ca\\': 0, \\'thal\\': 0, \\'target\\': 0}, \\'duplicates\\': 723, \\'age_range\\': (np.int64(29), np.int64(77)), \\'sex_range\\': (np.int64(0), np.int64(1)), \\'cp_range\\': (np.int64(0), np.int64(3)), \\'trestbps_range\\': (np.int64(94), np.int64(200)), \\'chol_range\\': (np.int64(126), np.int64(564)), \\'fbs_range\\': (np.int64(0), np.int64(1)), \\'restecg_range\\': (np.int64(0), np.int64(2)), \\'thalach_range\\': (np.int64(71), np.int64(202)), \\'exang_range\\': (np.int64(0), np.int64(1)), \\'oldpeak_range\\': (np.float64(0.0), np.float64(6.2)), \\'slope_range\\': (np.int64(0), np.int64(2)), \\'ca_range\\': (np.int64(0), np.int64(4)), \\'thal_range\\': (np.int64(0), np.int64(3)), \\'target_range\\': (np.int64(0), np.int64(1))}\\\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}'}, {'role': 'assistant', 'content': '\\nThought: I now know the final answer\\nFinal Answer: The `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed.'}])]",
+            "token_efficiency": "0.2211",
+            "type": "crewai.crew",
+            "verbose": "True"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "system": "crewai",
+          "usage": {
+            "completion_tokens": "1117",
+            "prompt_tokens": "5053",
+            "total_tokens": "6170"
+          }
+        },
+        "llm": {
+          "token_efficiency": "0.2211"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": {
+        "total_tokens": 6170,
+        "prompt_tokens": 5053,
+        "completion_tokens": 1117,
+        "cache_read_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "success_tokens": 6170,
+        "fail_tokens": 0,
+        "indeterminate_tokens": 0,
+        "prompt_cost": "0.0000000",
+        "completion_cost": "0.0000000",
+        "total_cost": "0.0000000"
+      }
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "a858365330a031b3",
+      "parent_span_id": "f9b0d66147806711",
+      "span_name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames..task",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:32.088568+00:00",
+      "end_time": "2026-01-06T22:19:34.126347+00:00",
+      "duration": 2037779700,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "input": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames.",
+            "name": "Task",
+            "output": "The `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed."
+          },
+          "span": {
+            "kind": "workflow.step"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "task": {
+            "agent": "Data Validation Specialist",
+            "expected_output": "validation_report dict populated with dynamic validation results.",
+            "human_input": "False",
+            "id": "ab4a63c3-35bd-4306-9700-ce716ce59380",
+            "input": "[Task(description=CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Inspect data quality using dynamic column references.\nREQUIRED CHECKS:\n1. For col in NUMERIC_COLUMNS: print min, max, null count\n2. For col in CATEGORICAL_COLUMNS: print unique count, top values\n3. print(f'Duplicate rows: {df_raw.duplicated().sum()}')\n4. Print 2-3 bullet points summarizing quality issues found.\nUse NUMERIC_COLUMNS and CATEGORICAL_COLUMNS - do NOT hardcode column names., expected_output=Quality inspection report using dynamic column detection.)]",
+            "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames.",
+            "processed_by_agents": "set()",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "type": "task"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "from_agent": "4016f56f-d9fb-40ce-9ced-40b218842b77",
+        "gen_ai": {
+          "request": {
+            "tools": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ]
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "331fabd8d5d28921",
+      "parent_span_id": "a858365330a031b3",
+      "span_name": "Data Validation Specialist.agent",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:32.088829+00:00",
+      "end_time": "2026-01-06T22:19:34.126347+00:00",
+      "duration": 2037518700,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agent": {
+          "id": "4016f56f-d9fb-40ce-9ced-40b218842b77",
+          "models": "gemini-2.5-flash",
+          "reasoning": "False",
+          "role": "Data Validation Specialist",
+          "tools": "[{\"name\": \"python_stateful_executor\", \"description\": \"Tool Name: python_stateful_executor\\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\"}]"
+        },
+        "agentops": {
+          "entity": {
+            "input": "Run validation rules on df_raw using dynamic columns and store in validation_report.",
+            "name": "Agent"
+          },
+          "span": {
+            "kind": "agent"
+          }
+        },
+        "crewai": {
+          "agent": {
+            "allow_code_execution": "False",
+            "allow_delegation": "False",
+            "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Validate df_raw dynamically - iterate over NUMERIC_COLUMNS for range checks, CATEGORICAL_COLUMNS for cardinality checks. Store results in validation_report dict. Do NOT hardcode column names - use the metadata variables.",
+            "cache": "True",
+            "goal": "Run validation rules on df_raw using dynamic columns and store in validation_report.",
+            "llm": "gemini-2.5-flash",
+            "max_retry_limit": "2",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "tool_execution": [
+              {
+                "name": "python_stateful_executor",
+                "parameters": "{'code': \"validation_report = {}\\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\\nfor col in NUMERIC_COLUMNS:\\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\\nfor col in CATEGORICAL_COLUMNS:\\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\\nprint(validation_report)\"}",
+                "result": "{\"success\": true, \"stdout\": \"{'missing': {'age': 0, 'sex': 0, 'cp': 0, 'trestbps': 0, 'chol': 0, 'fbs': 0, 'restecg': 0, 'thalach': 0, 'exang': 0, 'oldpeak': 0, 'slope': 0, 'ca': 0, 'thal': 0, 'target': 0}, 'duplicates': 723, 'age_range': (np.int64(29), np.int64(77)), 'sex_range': (np.int64(0), np.int64(1)), 'cp_range': (np.int64(0), np.int64(3)), 'trestbps_range': (np.int64(94), np.int64(200)), 'chol_range': (np.int64(126), np.int64(564)), 'fbs_range': (np.int64(0), np.int64(1)), 'restecg_range': (np.int64(0), np.int64(2)), 'thalach_range': (np.int64(71), np.int64(202)), 'exang_range': (np.int64(0), np.int64(1)), 'oldpeak_range': (np.float64(0.0), np.float64(6.2)), 'slope_range': (np.int64(0), np.int64(2)), 'ca_range': (np.int64(0), np.int64(4)), 'thal_range': (np.int64(0), np.int64(3)), 'target_range': (np.int64(0), np.int64(1))}\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+                "status": "success"
+              }
+            ]
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "request": {
+            "model": "gemini-2.5-flash"
+          },
+          "response": {
+            "model": "gemini-2.5-flash"
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "38e103ed64a61dc7",
+      "parent_span_id": "331fabd8d5d28921",
+      "span_name": "python_stateful_executor.tool_usage",
+      "span_kind": "Internal",
+      "span_type": "tool",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:33.554901+00:00",
+      "end_time": "2026-01-06T22:19:33.563719+00:00",
+      "duration": 8818900,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "span": {
+            "kind": "tool.usage"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        },
+        "tool": {
+          "name": "python_stateful_executor",
+          "parameters": "{'code': \"validation_report = {}\\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\\nfor col in NUMERIC_COLUMNS:\\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\\nfor col in CATEGORICAL_COLUMNS:\\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\\nprint(validation_report)\"}",
+          "result": "{\"success\": true, \"stdout\": \"{'missing': {'age': 0, 'sex': 0, 'cp': 0, 'trestbps': 0, 'chol': 0, 'fbs': 0, 'restecg': 0, 'thalach': 0, 'exang': 0, 'oldpeak': 0, 'slope': 0, 'ca': 0, 'thal': 0, 'target': 0}, 'duplicates': 723, 'age_range': (np.int64(29), np.int64(77)), 'sex_range': (np.int64(0), np.int64(1)), 'cp_range': (np.int64(0), np.int64(3)), 'trestbps_range': (np.int64(94), np.int64(200)), 'chol_range': (np.int64(126), np.int64(564)), 'fbs_range': (np.int64(0), np.int64(1)), 'restecg_range': (np.int64(0), np.int64(2)), 'thalach_range': (np.int64(71), np.int64(202)), 'exang_range': (np.int64(0), np.int64(1)), 'oldpeak_range': (np.float64(0.0), np.float64(6.2)), 'slope_range': (np.int64(0), np.int64(2)), 'ca_range': (np.int64(0), np.int64(4)), 'thal_range': (np.int64(0), np.int64(3)), 'target_range': (np.int64(0), np.int64(1))}\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+          "status": "success"
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "457362d2424d9313",
+      "parent_span_id": "5388519889d0441b",
+      "span_name": "crewai.workflow",
+      "span_kind": "Internal",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:34.154869+00:00",
+      "end_time": "2026-01-06T22:19:38.800737+00:00",
+      "duration": 4645868300,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "name": "Crew"
+          },
+          "span": {
+            "kind": "workflow"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "agents": [
+            {
+              "allow_delegation": "False",
+              "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Create df_clean = df_raw.copy(), then clean based on validation_report. Use NUMERIC_COLUMNS for numeric imputation, CATEGORICAL_COLUMNS for categorical handling. Print each cleaning step. INSPECTOR MODE: If code fails, read traceback, fix, and retry.",
+              "cache": "True",
+              "goal": "Create df_clean from df_raw using validation_report findings.",
+              "id": "68f0002a-5514-4c83-8bdf-eee8d91dd9b5",
+              "llm": "gemini-2.5-flash",
+              "max_iter": "25",
+              "role": "Data Cleaning Specialist",
+              "tools": [
+                {
+                  "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                  "name": "python_stateful_executor"
+                }
+              ],
+              "verbose": "True"
+            }
+          ],
+          "crew": {
+            "after_kickoff_callbacks": "[]",
+            "before_kickoff_callbacks": "[]",
+            "cache": "True",
+            "execution_logs": "[]",
+            "id": "115e16c4-38a2-4d9a-a927-8017c0cf91eb",
+            "max_turns": "1",
+            "memory": "False",
+            "name": "crew",
+            "planning": "False",
+            "process": "Process.sequential",
+            "result": "The `df_clean` DataFrame was initialized from `df_raw`, numeric missing values were imputed using the median, and duplicate rows were dropped. No categorical columns were processed as none were specified in `CATEGORICAL_COLUMNS`. The final shape of `df_clean` is (302, 14).",
+            "security_config": "fingerprint=Fingerprint(metadata={})",
+            "share_crew": "False",
+            "tasks": [
+              {
+                "agent": "Data Cleaning Specialist",
+                "agent_id": "68f0002a-5514-4c83-8bdf-eee8d91dd9b5",
+                "async_execution": "False",
+                "description": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from df_raw based on validation_report.\nCLEANING STEPS (use dynamic columns):\n1. df_clean = df_raw.copy()\n2. For col in NUMERIC_COLUMNS: impute missing with median\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n5. Print each operation performed\n6. Print final df_clean.shape\n\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.",
+                "expected_output": "df_clean created with cleaning steps documented.",
+                "human_input": "False",
+                "id": "0",
+                "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from df_raw based on validation_report.\nCLEANING STEPS (use dynamic columns):\n1. df_clean = df_raw.copy()\n2. For col in NUMERIC_COLUMNS: impute missing with median\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n5. Print each operation performed\n6. Print final df_clean.shape\n\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.",
+                "output_format": "OutputFormat.RAW",
+                "raw": "The `df_clean` DataFrame was initialized from `df_raw`, numeric missing values were imputed using the median, and duplicate rows were dropped. No categorical columns were processed as none were specified in `CATEGORICAL_COLUMNS`. The final shape of `df_clean` is (302, 14).",
+                "status": "completed",
+                "summary": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from...",
+                "tools": [
+                  {
+                    "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                    "name": "python_stateful_executor"
+                  }
+                ]
+              }
+            ],
+            "tasks_output": "[TaskOutput(description=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Create df_clean from df_raw based on validation_report.\\nCLEANING STEPS (use dynamic columns):\\n1. df_clean = df_raw.copy()\\n2. For col in NUMERIC_COLUMNS: impute missing with median\\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\\n5. Print each operation performed\\n6. Print final df_clean.shape\\n\\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.\", name=\"CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Create df_clean from df_raw based on validation_report.\\nCLEANING STEPS (use dynamic columns):\\n1. df_clean = df_raw.copy()\\n2. For col in NUMERIC_COLUMNS: impute missing with median\\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\\n5. Print each operation performed\\n6. Print final df_clean.shape\\n\\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.\", expected_output='df_clean created with cleaning steps documented.', summary='CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Create df_clean from...', raw='The `df_clean` DataFrame was initialized from `df_raw`, numeric missing values were imputed using the median, and duplicate rows were dropped. No categorical columns were processed as none were specified in `CATEGORICAL_COLUMNS`. The final shape of `df_clean` is (302, 14).', pydantic=None, json_dict=None, agent='Data Cleaning Specialist', output_format=<OutputFormat.RAW: 'raw'>, messages=[{'role': 'system', 'content': 'You are Data Cleaning Specialist. You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Create df_clean = df_raw.copy(), then clean based on validation_report. Use NUMERIC_COLUMNS for numeric imputation, CATEGORICAL_COLUMNS for categorical handling. Print each cleaning step. INSPECTOR MODE: If code fails, read traceback, fix, and retry.\\nYour personal goal is: Create df_clean from df_raw using validation_report findings.\\nYou ONLY have access to the following tools, and should NEVER make up tools that are not listed here:\\n\\nTool Name: python_stateful_executor\\nTool Arguments: {\\'code\\': {\\'description\\': None, \\'type\\': \\'str\\'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\\n\\nIMPORTANT: Use the following format in your response:\\n\\n```\\nThought: you should always think about what to do\\nAction: the action to take, only one name of [python_stateful_executor], just the name, exactly as it\\'s written.\\nAction Input: the input to the action, just a simple JSON object, enclosed in curly braces, using \" to wrap keys and values.\\nObservation: the result of the action\\n```\\n\\nOnce all necessary information is gathered, return the following format:\\n\\n```\\nThought: I now know the final answer\\nFinal Answer: the final answer to the original input question\\n```'}, {'role': 'user', 'content': \"\\nCurrent Task: CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\\n\\nTASK: Create df_clean from df_raw based on validation_report.\\nCLEANING STEPS (use dynamic columns):\\n1. df_clean = df_raw.copy()\\n2. For col in NUMERIC_COLUMNS: impute missing with median\\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\\n5. Print each operation performed\\n6. Print final df_clean.shape\\n\\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.\\n\\nThis is the expected criteria for your final answer: df_clean created with cleaning steps documented.\\nyou MUST return the actual complete content as the final answer, not a summary.\\n\\nThis is the context you're working with:\\nThe `validation_report` dictionary was populated with missing value counts per column, the total number of duplicate rows, and the min/max range for each numeric column. Since no categorical columns were provided, no cardinality checks were performed.\\n\\nBegin! This is VERY important to you, use the tools available and give your best Final Answer, your job depends on it!\\n\\nThought:\"}, {'role': 'assistant', 'content': 'Action: python_stateful_executor\\nAction Input: {\"code\": \"import pandas as pd\\\\n\\\\ndf_clean = df_raw.copy()\\\\nprint(\\\\\"1. Initialized df_clean from df_raw. Shape:\\\\\", df_clean.shape)\\\\n\\\\nprint(\\\\\"2. Imputing missing numeric values with median.\\\\\")\\\\nfor col in NUMERIC_COLUMNS:\\\\n    if col in df_clean.columns and df_clean[col].isnull().any():\\\\n        median_val = df_clean[col].median()\\\\n        df_clean[col].fillna(median_val, inplace=True)\\\\n        print(f\\\\\"   - Imputed missing values in numeric column \\'{col}\\' with median: {median_val}\\\\\")\\\\n\\\\nprint(\\\\\"3. Imputing missing categorical values with mode or \\'Unknown\\'.\\\\\")\\\\nif CATEGORICAL_COLUMNS:\\\\n    for col in CATEGORICAL_COLUMNS:\\\\n        if col in df_clean.columns and df_clean[col].isnull().any():\\\\n            # Check if mode exists, otherwise use \\'Unknown\\'\\\\n            mode_val = df_clean[col].mode()[0] if not df_clean[col].mode().empty else \\'Unknown\\'\\\\n            df_clean[col].fillna(mode_val, inplace=True)\\\\n            print(f\\\\\"   - Imputed missing values in categorical column \\'{col}\\' with mode: {mode_val}\\\\\")\\\\nelse:\\\\n    print(\\\\\"   - No categorical columns specified for imputation.\\\\\")\\\\n\\\\ninitial_rows = df_clean.shape[0]\\\\ndf_clean.drop_duplicates(inplace=True)\\\\nduplicates_dropped = initial_rows - df_clean.shape[0]\\\\nprint(f\\\\\"4. Dropped {duplicates_dropped} duplicate rows. New shape: {df_clean.shape}\\\\\")\\\\n\\\\nprint(\\\\\"5. All operations performed.\\\\\")\\\\nprint(\\\\\"6. Final df_clean.shape:\\\\\", df_clean.shape)\\\\n\"}\\nObservation: {\"success\": true, \"stdout\": \"1. Initialized df_clean from df_raw. Shape: (1025, 14)\\\\n2. Imputing missing numeric values with median.\\\\n3. Imputing missing categorical values with mode or \\'Unknown\\'.\\\\n   - No categorical columns specified for imputation.\\\\n4. Dropped 723 duplicate rows. New shape: (302, 14)\\\\n5. All operations performed.\\\\n6. Final df_clean.shape: (302, 14)\\\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}'}, {'role': 'assistant', 'content': '\\nThought: I now know the final answer\\nFinal Answer: The `df_clean` DataFrame was initialized from `df_raw`, numeric missing values were imputed using the median, and duplicate rows were dropped. No categorical columns were processed as none were specified in `CATEGORICAL_COLUMNS`. The final shape of `df_clean` is (302, 14).'}])]",
+            "token_efficiency": "0.2301",
+            "type": "crewai.crew",
+            "verbose": "True"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "system": "crewai",
+          "usage": {
+            "completion_tokens": "1648",
+            "prompt_tokens": "7163",
+            "total_tokens": "8811"
+          }
+        },
+        "llm": {
+          "token_efficiency": "0.2301"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": {
+        "total_tokens": 8811,
+        "prompt_tokens": 7163,
+        "completion_tokens": 1648,
+        "cache_read_input_tokens": 0,
+        "reasoning_tokens": 0,
+        "success_tokens": 8811,
+        "fail_tokens": 0,
+        "indeterminate_tokens": 0,
+        "prompt_cost": "0.0000000",
+        "completion_cost": "0.0000000",
+        "total_cost": "0.0000000"
+      }
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "4803e246cf5233b2",
+      "parent_span_id": "457362d2424d9313",
+      "span_name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from df_raw based on validation_report.\nCLEANING STEPS (use dynamic columns):\n1. df_clean = df_raw.copy()\n2. For col in NUMERIC_COLUMNS: impute missing with median\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n5. Print each operation performed\n6. Print final df_clean.shape\n\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help..task",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:34.166709+00:00",
+      "end_time": "2026-01-06T22:19:38.792933+00:00",
+      "duration": 4626224400,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "entity": {
+            "input": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from df_raw based on validation_report.\nCLEANING STEPS (use dynamic columns):\n1. df_clean = df_raw.copy()\n2. For col in NUMERIC_COLUMNS: impute missing with median\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n5. Print each operation performed\n6. Print final df_clean.shape\n\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.",
+            "name": "Task",
+            "output": "The `df_clean` DataFrame was initialized from `df_raw`, numeric missing values were imputed using the median, and duplicate rows were dropped. No categorical columns were processed as none were specified in `CATEGORICAL_COLUMNS`. The final shape of `df_clean` is (302, 14)."
+          },
+          "span": {
+            "kind": "workflow.step"
+          },
+          "tags": "[\"crewai\"]"
+        },
+        "crewai": {
+          "task": {
+            "agent": "Data Cleaning Specialist",
+            "expected_output": "df_clean created with cleaning steps documented.",
+            "human_input": "False",
+            "id": "765d4a98-3587-4a26-ba30-fe6be11e6779",
+            "input": "[Task(description=CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Validate df_raw and populate validation_report dict.\nVALIDATION RULES (iterate dynamically):\n```\nvalidation_report = {}\nvalidation_report['missing'] = df_raw[DATASET_COLUMNS].isnull().sum().to_dict()\nvalidation_report['duplicates'] = int(df_raw.duplicated().sum())\nfor col in NUMERIC_COLUMNS:\n    validation_report[f'{col}_range'] = (df_raw[col].min(), df_raw[col].max())\nfor col in CATEGORICAL_COLUMNS:\n    validation_report[f'{col}_unique'] = df_raw[col].nunique()\n```\nPrint summary of validation_report. Do NOT create new DataFrames., expected_output=validation_report dict populated with dynamic validation results.)]",
+            "name": "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\nTASK: Create df_clean from df_raw based on validation_report.\nCLEANING STEPS (use dynamic columns):\n1. df_clean = df_raw.copy()\n2. For col in NUMERIC_COLUMNS: impute missing with median\n3. For col in CATEGORICAL_COLUMNS: impute missing with mode or 'Unknown'\n4. Drop duplicate rows: df_clean.drop_duplicates(inplace=True)\n5. Print each operation performed\n6. Print final df_clean.shape\n\nINSPECTOR MODE: If code fails, read the traceback, identify the error, fix it, and retry. Do NOT ask for help.",
+            "processed_by_agents": "set()",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "type": "task"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "from_agent": "68f0002a-5514-4c83-8bdf-eee8d91dd9b5",
+        "gen_ai": {
+          "request": {
+            "tools": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ]
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "45041638b42aae93",
+      "parent_span_id": "4803e246cf5233b2",
+      "span_name": "Data Cleaning Specialist.agent",
+      "span_kind": "Client",
+      "span_type": "agent",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:34.167213+00:00",
+      "end_time": "2026-01-06T22:19:38.792934+00:00",
+      "duration": 4625721100,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agent": {
+          "id": "68f0002a-5514-4c83-8bdf-eee8d91dd9b5",
+          "models": "gemini-2.5-flash",
+          "reasoning": "False",
+          "role": "Data Cleaning Specialist",
+          "tools": "[{\"name\": \"python_stateful_executor\", \"description\": \"Tool Name: python_stateful_executor\\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.\"}]"
+        },
+        "agentops": {
+          "entity": {
+            "input": "Create df_clean from df_raw using validation_report findings.",
+            "name": "Agent"
+          },
+          "span": {
+            "kind": "agent"
+          }
+        },
+        "crewai": {
+          "agent": {
+            "allow_code_execution": "False",
+            "allow_delegation": "False",
+            "backstory": "You operate in CORE MODE within a persistent Python kernel. CRITICAL RULES: 1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. 2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. 3) Reference existing variables: df_raw, df_clean, df_features, validation_report. 4) Output concise code, no conversational text. 5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code. Your job: Create df_clean = df_raw.copy(), then clean based on validation_report. Use NUMERIC_COLUMNS for numeric imputation, CATEGORICAL_COLUMNS for categorical handling. Print each cleaning step. INSPECTOR MODE: If code fails, read traceback, fix, and retry.",
+            "cache": "True",
+            "goal": "Create df_clean from df_raw using validation_report findings.",
+            "llm": "gemini-2.5-flash",
+            "max_retry_limit": "2",
+            "tool": [
+              {
+                "description": "Tool Name: python_stateful_executor\nTool Arguments: {'code': {'description': None, 'type': 'str'}}\nTool Description: Executes Python code in a shared in-memory session that persists state between calls. Use only the existing variables (df_raw, df_clean, df_features, validation_report, etc.) and DO NOT reload the CSV.",
+                "name": "python_stateful_executor"
+              }
+            ],
+            "tool_execution": [
+              {
+                "name": "python_stateful_executor",
+                "parameters": "{'code': 'import pandas as pd\\n\\ndf_clean = df_raw.copy()\\nprint(\"1. Initialized df_clean from df_raw. Shape:\", df_clean.shape)\\n\\nprint(\"2. Imputing missing numeric values with median.\")\\nfor col in NUMERIC_COLUMNS:\\n    if col in df_clean.columns and df_clean[col].isnull().any():\\n        median_val = df_clean[col].median()\\n        df_clean[col].fillna(median_val, inplace=True)\\n        print(f\"   - Imputed missing values in numeric column \\'{col}\\' with median: {median_val}\")\\n\\nprint(\"3. Imputing missing categorical values with mode or \\'Unknown\\'.\")\\nif CATEGORICAL_COLUMNS:\\n    for col in CATEGORICAL_COLUMNS:\\n        if col in df_clean.columns and df_clean[col].isnull().any():\\n            # Check if mode exists, otherwise use \\'Unknown\\'\\n            mode_val = df_clean[col].mode()[0] if not df_clean[col].mode().empty else \\'Unknown\\'\\n            df_clean[col].fillna(mode_val, inplace=True)\\n            print(f\"   - Imputed missing values in categorical column \\'{col}\\' with mode: {mode_val}\")\\nelse:\\n    print(\"   - No categorical columns specified for imputation.\")\\n\\ninitial_rows = df_clean.shape[0]\\ndf_clean.drop_duplicates(inplace=True)\\nduplicates_dropped = initial_rows - df_clean.shape[0]\\nprint(f\"4. Dropped {duplicates_dropped} duplicate rows. New shape: {df_clean.shape}\")\\n\\nprint(\"5. All operations performed.\")\\nprint(\"6. Final df_clean.shape:\", df_clean.shape)\\n'}",
+                "result": "{\"success\": true, \"stdout\": \"1. Initialized df_clean from df_raw. Shape: (1025, 14)\\n2. Imputing missing numeric values with median.\\n3. Imputing missing categorical values with mode or 'Unknown'.\\n   - No categorical columns specified for imputation.\\n4. Dropped 723 duplicate rows. New shape: (302, 14)\\n5. All operations performed.\\n6. Final df_clean.shape: (302, 14)\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+                "status": "success"
+              }
+            ]
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "gen_ai": {
+          "request": {
+            "model": "gemini-2.5-flash"
+          },
+          "response": {
+            "model": "gemini-2.5-flash"
+          },
+          "system": "crewai"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    },
+    {
+      "freeplan_truncated": false,
+      "span_id": "fa7c17c6b90f0755",
+      "parent_span_id": "45041638b42aae93",
+      "span_name": "python_stateful_executor.tool_usage",
+      "span_kind": "Internal",
+      "span_type": "tool",
+      "service_name": "agentops",
+      "start_time": "2026-01-06T22:19:37.957192+00:00",
+      "end_time": "2026-01-06T22:19:37.966239+00:00",
+      "duration": 9047700,
+      "status_code": "OK",
+      "status_message": "",
+      "attributes": {},
+      "resource_attributes": {
+        "ProjectId": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc",
+        "agentops": {
+          "project": {
+            "id": "e1b1b202-1fa3-4484-89cb-f30fef5d8ccc"
+          }
+        },
+        "host": {
+          "name": "5f65ad67eda1"
+        },
+        "imported_libraries": "[\"agentops\"]",
+        "os": {
+          "type": "linux"
+        },
+        "service": {
+          "name": "agentops"
+        }
+      },
+      "span_attributes": {
+        "agentops": {
+          "span": {
+            "kind": "tool.usage"
+          }
+        },
+        "deployment": {
+          "environment": "default_environment"
+        },
+        "service": {
+          "name": "default_application"
+        },
+        "telemetry": {
+          "sdk": {
+            "name": "agentops"
+          }
+        },
+        "tool": {
+          "name": "python_stateful_executor",
+          "parameters": "{'code': 'import pandas as pd\\n\\ndf_clean = df_raw.copy()\\nprint(\"1. Initialized df_clean from df_raw. Shape:\", df_clean.shape)\\n\\nprint(\"2. Imputing missing numeric values with median.\")\\nfor col in NUMERIC_COLUMNS:\\n    if col in df_clean.columns and df_clean[col].isnull().any():\\n        median_val = df_clean[col].median()\\n        df_clean[col].fillna(median_val, inplace=True)\\n        print(f\"   - Imputed missing values in numeric column \\'{col}\\' with median: {median_val}\")\\n\\nprint(\"3. Imputing missing categorical values with mode or \\'Unknown\\'.\")\\nif CATEGORICAL_COLUMNS:\\n    for col in CATEGORICAL_COLUMNS:\\n        if col in df_clean.columns and df_clean[col].isnull().any():\\n            # Check if mode exists, otherwise use \\'Unknown\\'\\n            mode_val = df_clean[col].mode()[0] if not df_clean[col].mode().empty else \\'Unknown\\'\\n            df_clean[col].fillna(mode_val, inplace=True)\\n            print(f\"   - Imputed missing values in categorical column \\'{col}\\' with mode: {mode_val}\")\\nelse:\\n    print(\"   - No categorical columns specified for imputation.\")\\n\\ninitial_rows = df_clean.shape[0]\\ndf_clean.drop_duplicates(inplace=True)\\nduplicates_dropped = initial_rows - df_clean.shape[0]\\nprint(f\"4. Dropped {duplicates_dropped} duplicate rows. New shape: {df_clean.shape}\")\\n\\nprint(\"5. All operations performed.\")\\nprint(\"6. Final df_clean.shape:\", df_clean.shape)\\n'}",
+          "result": "{\"success\": true, \"stdout\": \"1. Initialized df_clean from df_raw. Shape: (1025, 14)\\n2. Imputing missing numeric values with median.\\n3. Imputing missing categorical values with mode or 'Unknown'.\\n   - No categorical columns specified for imputation.\\n4. Dropped 723 duplicate rows. New shape: (302, 14)\\n5. All operations performed.\\n6. Final df_clean.shape: (302, 14)\\n\", \"error\": null, \"charts\": [], \"state_flags\": {\"has_df_raw\": true, \"has_df_clean\": true, \"has_df_features\": true, \"has_validation_report\": true}}",
+          "status": "success"
+        }
+      },
+      "event_timestamps": [],
+      "event_names": [],
+      "event_attributes": [],
+      "link_trace_ids": [],
+      "link_span_ids": [],
+      "link_trace_states": [],
+      "link_attributes": [],
+      "metrics": null
+    }
+  ]
+}
