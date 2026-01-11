@@ -145,15 +145,6 @@ analysis_results/
 
 AgentOps provides observability for the workflow, tracking agent interactions, LLM calls, and task executions.
 
-### Setup
-
-1. Sign up at https://app.agentops.ai
-2. Copy your API key
-3. Add to `.env`:
-   ```
-   AGENTOPS_API_KEY=your-key-here
-   ```
-
 ### Features
 
 - Real-time agent activity tracking
@@ -187,7 +178,3 @@ python run.py
 ImportError: Google Gen AI native provider not available
 ```
 **Fix:** Ensure `crewai[google-genai]` is installed (included in requirements.txt)
-
-## License
-
-MIT
