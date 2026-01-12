@@ -20,7 +20,7 @@ from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
 from pydantic import Field
 
-import google.generativeai as genai  # noqa: F401
+import google.generativeai as genai
 
 
 # ============================================================================
@@ -57,25 +57,20 @@ class PythonSessionTool(BaseTool):
     # Session & state helpers
     # ------------------------------------------------------------------ #
     def _init_base_session(self):
-        """Initialize the shared session globals once."""
-        # Store output_dir so agents can use it for saving charts
+        """Initialize shared session globals."""
         chart_output_dir = Path(self.output_dir).resolve()
         chart_output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create a wrapped savefig that always saves to the correct directory
+        # Intercept savefig to force output to our charts directory
         original_savefig = plt.savefig
         def wrapped_savefig(fname, *args, **kwargs):
-            """Redirect all savefig calls to the chart output directory."""
             fname_path = Path(fname)
-            # If it's just a filename (no directory), save to chart_output_dir
             if fname_path.parent == Path('.') or not fname_path.is_absolute():
                 fname = str(chart_output_dir / fname_path.name)
             return original_savefig(fname, *args, **kwargs)
         
-        # Replace plt.savefig with our wrapped version
         plt.savefig = wrapped_savefig
         
-        # Set consistent plot styling for all visualizations
         plt.style.use('seaborn-v0_8-whitegrid')
         plt.rcParams['figure.figsize'] = [10, 6]
         plt.rcParams['axes.titlesize'] = 14
@@ -95,13 +90,7 @@ class PythonSessionTool(BaseTool):
         self.session_globals = base_globals
 
     def init_session(self, dataset_path: str):
-        """
-        Called once from workflow before any LLM tool calls.
-
-        - Loads CSV into df_raw
-        - Sets df_clean and df_features to None initially
-        - Injects column metadata for dynamic column awareness (Core Mode)
-        """
+        """Load dataset and inject metadata for Core Mode."""
         code = f"""
 import pandas as _pd
 import numpy as _np
@@ -150,7 +139,7 @@ def validate_core_state():
         exec(code, self.session_globals)
 
     def validate_state(self) -> Dict[str, bool]:
-        """Check presence of key objects between tasks."""
+        """Check presence of key objects."""
         g = self.session_globals
         flags = {
             "has_df_raw": "df_raw" in g and isinstance(g.get("df_raw"), pd.DataFrame),
@@ -164,19 +153,9 @@ def validate_core_state():
         }
         return flags
 
-    # ------------------------------------------------------------------ #
-    # Tool execution
-    # ------------------------------------------------------------------ #
-    def _run(self, code: str) -> str:
-        """
-        Execute Python code inside the shared session and return JSON.
 
-        The code can assume:
-        - df_raw: original dataset (never modified after load)
-        - df_clean: cleaned dataset (may start as None)
-        - df_features: transformed dataset/features (may start as None)
-        - validation_report: dict with validation results
-        """
+    def _run(self, code: str) -> str:
+        """Execute Python code and return JSON with stdout, charts, state_flags."""
         result = {
             "success": False,
             "stdout": "",
@@ -185,7 +164,6 @@ def validate_core_state():
             "state_flags": {},
         }
 
-        # Capture prints in-memory
         import io
         import contextlib
 
@@ -201,7 +179,6 @@ def validate_core_state():
         result["stdout"] = stdout_buffer.getvalue()
         stdout_buffer.close()
 
-        # Collect charts created with plt
         charts = []
         for fig_num in plt.get_fignums():
             fig = plt.figure(fig_num)
@@ -211,11 +188,9 @@ def validate_core_state():
             plt.close(fig)
         result["charts"] = charts
 
-        # Attach state validation flags
         result["state_flags"] = self.validate_state()
 
-        # Reset stdout to prevent Rich FileProxy corruption
-        # Rich wraps stdout, and redirect_stdout can corrupt its internal state
+        # Fix Rich stdout corruption after redirect
         import sys
         if hasattr(sys, '__stdout__') and sys.__stdout__ is not None:
             sys.stdout = sys.__stdout__
@@ -250,7 +225,6 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
     llm_medium = _make_gemini_llm(max_output_tokens=640, thinking_budget=256)
     llm_long = _make_gemini_llm(max_output_tokens=1200, thinking_budget=512)
 
-    # === CORE MODE INSTRUCTION (shared by all data prep agents) ===
     core_mode_instruction = (
         "You operate in CORE MODE within a persistent Python kernel. "
         "CRITICAL RULES: "
@@ -339,7 +313,6 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
             tools=[executor_tool],
             verbose=True,
         ),
-        # === ANALYSIS AGENTS: Codified Prompting + Inspector Pattern ===
         "eda_analysis": Agent(
             role="Exploratory Data Analysis Specialist",
             goal="Perform EDA using CODIFIED PROMPTING - output pseudocode plan first, then execute.",
@@ -375,7 +348,7 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
                 "Use ORIGINAL_NUMERIC_COLUMNS for original column names.\n"
                 "DO NOT call plt.savefig() - tool saves automatically."
             ),
-            llm=llm_medium,  # Upgraded from short for better analysis
+            llm=llm_medium,
             tools=[executor_tool],
             verbose=True,
         ),
@@ -399,7 +372,6 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
             tools=[executor_tool],
             verbose=True,
         ),
-        # === REPORT AGENT ===
         "report_generator": Agent(
             role="Technical Report Writer",
             goal="Produce a concise markdown report summarizing data analysis results.",
@@ -423,7 +395,6 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
 # ============================================================================
 
 def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
-    # === CORE MODE TASK PREFIX (shortened - full rules in agent backstory) ===
     core_mode_prefix = "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\n"
     
     tasks = {
@@ -538,7 +509,6 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
             agent=agents["data_transformation"],
             async_execution=False,
         ),
-        # === ANALYSIS TASKS: Codified Prompting + Inspector Pattern ===
         "eda_analysis": Task(
             description=(
                 "CODIFIED PROMPTING: Output your plan as pseudocode FIRST, then execute.\n\n"
@@ -666,14 +636,11 @@ class DataAnalysisWorkflow:
         self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(exist_ok=True)
         
-        # Generate unique run ID based on timestamp for this execution
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.run_output_dir = self.output_dir / f"run_{self.run_id}"
         self.run_output_dir.mkdir(exist_ok=True)
 
-        # Shared, long-lived Python session tool - charts go to run-specific directory
         self.executor = PythonSessionTool(output_dir=str(self.run_output_dir / "charts"))
-        # Load the dataset once into df_raw
         self.executor.init_session(self.dataset_path)
 
         self.agents = create_agents(self.executor)
@@ -683,9 +650,7 @@ class DataAnalysisWorkflow:
         self.charts: List[Path] = []
         self.report_path: Optional[Path] = None
 
-    # ------------------------------------------------------------------ #
-    # Simple retry wrapper
-    # ------------------------------------------------------------------ #
+
     def _run_task_with_retry(
         self,
         agent: Agent,
@@ -695,12 +660,7 @@ class DataAnalysisWorkflow:
         delay_seconds: int = 4,
         extra_inputs: Optional[Dict[str, Any]] = None,
     ) -> Any:
-        """
-        Run a Crew with a single agent+task, with basic retry on failure.
-
-        - Retries on exceptions or explicit 'Error' in the stringified result.
-        - Waits delay_seconds between attempts.
-        """
+        """Run a Crew with retry on failure."""
         attempt = 0
         last_error = None
         extra_inputs = extra_inputs or {}
@@ -735,9 +695,7 @@ class DataAnalysisWorkflow:
         self.results[task_key] = f"Error after retries: {last_error}"
         return self.results[task_key]
 
-    # ------------------------------------------------------------------ #
-    # Main pipeline
-    # ------------------------------------------------------------------ #
+
     def run_sequential_pipeline(self) -> Dict[str, Any]:
         print(f"\n{'='*70}")
         print("STARTING SEQUENTIAL DATA ANALYSIS PIPELINE (STATEFUL)")
@@ -775,7 +733,6 @@ class DataAnalysisWorkflow:
             )
             print(f"[PHASE 1 - Task {i}/{len(prep_order)}] [OK] Completed (or max retries reached)")
 
-        # Store preparation results for context
         self.results["preparation"] = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in prep_order
         )
@@ -809,7 +766,6 @@ class DataAnalysisWorkflow:
             )
             print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] [OK] Completed (or max retries reached)")
 
-        # Store analysis results for context
         self.results["analysis"] = "\n---\n".join(
             self.results.get(task_key, "") for task_key, _ in analysis_order
         )
@@ -861,23 +817,20 @@ class DataAnalysisWorkflow:
             print("\n[PHASE 3] [OK] Report generation completed")
         except Exception as e:
             print(f"\n[PHASE 3] [ERROR] Error in report generation: {e}")
-            # Generate a fallback report from the collected results
             self.results["report"] = self._generate_fallback_report()
 
-        # Collect charts from run-specific directory and save report immediately
         charts_dir = self.run_output_dir / "charts"
         if charts_dir.exists():
             self.charts = list(charts_dir.glob("*.png"))
         else:
             self.charts = []
         
-        # Save the report now to ensure it's written even if something fails later
         self._save_report_to_file()
         
         return self.results
     
     def _generate_fallback_report(self) -> str:
-        """Generate a fallback report from collected results if LLM fails."""
+        """Fallback report if LLM fails."""
         report_lines = [
             "# Data Analysis Report",
             "",
@@ -913,12 +866,11 @@ class DataAnalysisWorkflow:
         return "\n".join(report_lines)
     
     def _save_report_to_file(self):
-        """Save the report to file immediately in the run-specific directory."""
+        """Save report to run directory."""
         report_md = self.results.get("report", "")
         if not report_md or report_md.startswith("Error:"):
             report_md = self._generate_fallback_report()
         
-        # Save to run-specific directory with unique filename
         self.report_path = self.run_output_dir / f"analysis_report_{self.run_id}.md"
         try:
             self.report_path.write_text(report_md, encoding="utf-8")
@@ -926,15 +878,10 @@ class DataAnalysisWorkflow:
         except Exception as e:
             print(f"[REPORT] [ERROR] Failed to save report: {e}")
 
-    # ------------------------------------------------------------------ #
-    # Report generation helpers
-    # ------------------------------------------------------------------ #
     def generate_markdown_report(self) -> str:
-        """Generate and save the markdown report. Report may already be saved."""
-        # Use run-specific report path
+        """Generate and save the markdown report."""
         report_path = self.report_path or (self.run_output_dir / f"analysis_report_{self.run_id}.md")
         
-        # Check if report was already saved during pipeline
         if report_path.exists():
             print(f"\n{'='*70}")
             print("[OK] MARKDOWN REPORT ALREADY GENERATED")
@@ -943,7 +890,6 @@ class DataAnalysisWorkflow:
             print(f"{'='*70}\n")
             return str(report_path)
         
-        # If not, save it now
         report_md = self.results.get("report", "")
         if not report_md or report_md.startswith("Error:"):
             report_md = self._generate_fallback_report()

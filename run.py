@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Minimal runner for CrewAI Data Analysis
-Run this file to execute the analysis workflow
+This file triggers the analysis workflow
 """
 
 import os
@@ -9,19 +9,14 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Fix recursion error from rich library
 sys.setrecursionlimit(5000)
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Configure Gemini as the default LLM for CrewAI
-# This must be set BEFORE importing crewai_data_analysis
 os.environ["CREWAI_LLM_MODEL"] = "gemini-2.5-flash"
 
 from crewai_data_analysis import DataAnalysisWorkflow
 
-# Initialize AgentOps for workflow observability (if API key is set)
 agentops_key = os.getenv("AGENTOPS_API_KEY")
 if agentops_key:
     import agentops
@@ -39,13 +34,16 @@ def main():
     print("CREWAI DATA ANALYSIS WORKFLOW")
     print(f"{'='*70}\n")
 
-    # Get configuration from .env
-    # Set DATASET_PATH in .env, e.g. DATASET_PATH=CarSales_Dataset.csv
-    dataset_path = os.getenv("DATASET_PATH", "CarSales_Dataset.csv")
+    dataset_path = os.getenv("DATASET_PATH")
     output_dir = os.getenv("OUTPUT_DIR", "./analysis_results")
     api_key = os.getenv("GEMINI_API_KEY")
 
-    # Verify API key is set
+    if not dataset_path:
+        print("[ERROR] DATASET_PATH not set!")
+        print("\nFix: Open .env file and add your dataset path:")
+        print("  DATASET_PATH=your_dataset.csv")
+        return
+
     if not api_key:
         print("[ERROR] GEMINI_API_KEY not set!")
         print("\nFix: Open .env file and add your API key:")
@@ -55,7 +53,6 @@ def main():
     print("[OK] Gemini API Key configured")
     print("[OK] Using LLM: gemini-2.5-flash")
 
-    # Require that the dataset already exists; do NOT create any sample CSV
     if not Path(dataset_path).exists():
         print(f"\n[ERROR] Dataset not found on disk: {dataset_path}")
         print("Fix one of these:")
@@ -65,7 +62,6 @@ def main():
     else:
         print(f"[OK] Using dataset: {dataset_path}")
 
-    # Initialize workflow
     print("\nInitializing workflow...")
     print(f"  Input: {dataset_path}")
     print(f"  Output: {output_dir}\n")
@@ -75,12 +71,10 @@ def main():
         output_dir=output_dir,
     )
 
-    # Run analysis
     print("Starting analysis pipeline...\n")
     try:
         results = workflow.run_sequential_pipeline()
 
-        # Generate markdown report
         print("\nGenerating markdown report...")
         report_path = workflow.generate_markdown_report()
 
