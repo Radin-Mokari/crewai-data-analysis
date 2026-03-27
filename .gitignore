@@ -25,6 +25,11 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
+# Node.js / Next.js
+node_modules/
+.next/
+out/
+
 # Execution outputs (optional - remove if you want to track results)
 execution_outputs/
 
