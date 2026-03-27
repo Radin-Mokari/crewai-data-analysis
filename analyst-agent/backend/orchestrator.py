@@ -139,6 +139,7 @@ class AnalysisOrchestrator:
             "errors": [],
             "redo_count": 0,
             "agent_redo_count": {},
+            "report_text": "",
         }
         self._known_cell_count = 0
         self._specialist_cells: dict[str, list[str]] = {}
@@ -378,6 +379,50 @@ class AnalysisOrchestrator:
     # Specialist Execution (Context Injection)
     # -----------------------------------------------------------------------
 
+    def _build_report_context(self) -> str:
+        """
+        Build comprehensive context for the report agent using FULL cell outputs.
+        This captures actual code executed and outputs produced by each specialist.
+        """
+        all_cells = self.tool.get_cells()
+        specialist_outputs = {}
+
+        # Group cells by agent (excluding system/validation/inspection cells)
+        for cell in all_cells:
+            agent = cell.get("agent", "system")
+            if agent in ["system", "validation", "inspection"]:
+                continue
+            if agent not in specialist_outputs:
+                specialist_outputs[agent] = []
+            specialist_outputs[agent].append(cell)
+
+        context_parts = []
+        for specialist_name in self.state.get("completed", []):
+            cells = specialist_outputs.get(specialist_name, [])
+            if not cells:
+                continue
+
+            section = [f"=== {specialist_name.upper()} ANALYSIS ==="]
+
+            for i, cell in enumerate(cells, 1):
+                code = cell.get("code", "").strip()
+                stdout = cell.get("stdout", "").strip()
+                images = cell.get("images", [])
+
+                section.append(f"\n--- Cell {i} ---")
+                if code:
+                    # Include full code (up to 2000 chars per cell)
+                    section.append(f"CODE:\n```python\n{code[:2000]}\n```")
+                if stdout:
+                    # Include full output (up to 3000 chars per cell)
+                    section.append(f"OUTPUT:\n{stdout[:3000]}")
+                if images:
+                    section.append(f"CHARTS GENERATED: {images}")
+
+            context_parts.append("\n".join(section))
+
+        return "\n\n".join(context_parts) if context_parts else "No prior analysis completed."
+
     def _run_specialist(self, name: str, instructions: str, prior_cell_ids: list[str] | None = None) -> str:
         agent = self.specialists[name]
 
@@ -403,20 +448,26 @@ class AnalysisOrchestrator:
             )
 
         if name == "report":
-            report_context_parts = []
-            for sname, summary in self.state["task_summaries"].items():
-                report_context_parts.append(f"=== {sname.upper()} ===\n{summary[:3000]}")
-            report_context = "\n\n".join(report_context_parts) if report_context_parts else "No prior analysis."
+            # Use comprehensive context with full cell outputs instead of truncated summaries
+            report_context = self._build_report_context()
 
             task_desc = (
-                f"PRIOR ANALYSIS FINDINGS:\n{report_context}\n\n"
-                f"DATASET PROFILE: {json.dumps(self.state.get('profile', {}), default=str)[:1500]}\n\n"
-                f"CHART FILES: {self.state.get('charts', [])}\n\n"
+                f"PRIOR ANALYSIS FINDINGS (with actual code and outputs):\n{report_context}\n\n"
+                f"DATASET PROFILE: {json.dumps(self.state.get('profile', {}), default=str)}\n\n"
+                f"ALL CHART FILES GENERATED: {self.state.get('charts', [])}\n\n"
                 f"INSTRUCTIONS: {instructions}\n\n"
                 f"{redo_context}"
                 f"Write a comprehensive markdown report synthesizing ALL the findings above.\n"
-                f"Every section above contains real data — use specific numbers, column names, and findings.\n"
-                f"The report MUST include all sections: Dataset Overview, Data Quality, EDA, Visualizations, Statistical Analysis, Key Findings."
+                f"USE THE ACTUAL NUMBERS, COLUMN NAMES, AND STATISTICS from the cell outputs.\n"
+                f"The report MUST include these sections:\n"
+                f"1. Executive Summary\n"
+                f"2. Dataset Overview (shape, columns, types)\n"
+                f"3. Data Quality & Cleaning (what was fixed)\n"
+                f"4. Exploratory Data Analysis (correlations, distributions, patterns)\n"
+                f"5. Visualizations (reference the chart files by name)\n"
+                f"6. Statistical Analysis (test results, significance)\n"
+                f"7. Key Findings & Recommendations\n"
+                f"Be DETAILED and SPECIFIC - include actual values from the analysis."
             )
         else:
             task_desc = (
@@ -443,7 +494,13 @@ class AnalysisOrchestrator:
 
         try:
             result = crew.kickoff()
-            return str(result).strip()
+            raw_result = str(result).strip()
+
+            # Store full report text separately — not subject to summary truncation
+            if name == "report":
+                self.state["report_text"] = raw_result
+
+            return raw_result
         except Exception as e:
             error_msg = f"Specialist {name} failed: {str(e)}"
             self.state["errors"].append(error_msg)
@@ -500,13 +557,24 @@ class AnalysisOrchestrator:
     # -----------------------------------------------------------------------
 
     def _get_report_text(self) -> str:
-        """Extract clean report markdown from task_summaries."""
-        report_text = self.state["task_summaries"].get("report", "")
-        if not report_text:
+        """Extract clean report markdown — uses full text, not truncated summary."""
+        # Prefer the full stored report text (set in _run_specialist when name == "report")
+        report_text = self.state.get("report_text", "")
+
+        if report_text:
+            # We have the full report - return it as-is
+            return report_text.strip()
+
+        # Fallback to task_summaries if report_text wasn't stored
+        fallback = self.state["task_summaries"].get("report", "")
+        if not fallback:
             return ""
-        if "AGENT SUMMARY:" in report_text:
-            report_text = report_text.split("AGENT SUMMARY:", 1)[1].strip()
-        return report_text
+
+        # The fallback from task_summaries has "AGENT SUMMARY:" prefix from _build_summary()
+        if "AGENT SUMMARY:" in fallback:
+            fallback = fallback.split("AGENT SUMMARY:", 1)[1].strip()
+
+        return fallback
 
     def _save_report(self):
         report_text = self._get_report_text()
@@ -526,23 +594,34 @@ class AnalysisOrchestrator:
         """
         Save report + all chart images into a timestamped subdirectory
         under target_base (e.g. analysis_results/).
+        Structure:
+          analysis_results/run_<timestamp>/
+            charts/
+              chart_xxx.png
+            analysis_report_<timestamp>.md
         Returns {"run_dir": str, "report_path": str, "charts_copied": int}.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = Path(target_base) / f"run_{timestamp}"
         run_dir.mkdir(parents=True, exist_ok=True)
 
+        # Create charts subdirectory
+        charts_dir = run_dir / "charts"
+        charts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save report
         report_text = self._get_report_text()
         report_path = None
         if report_text:
             report_path = run_dir / f"analysis_report_{timestamp}.md"
             report_path.write_text(report_text, encoding="utf-8")
 
+        # Copy charts to charts subdirectory
         charts_copied = 0
         for chart_path_str in self.state.get("charts", []):
             src = Path(chart_path_str)
             if src.exists():
-                dst = run_dir / src.name
+                dst = charts_dir / src.name
                 shutil.copy2(src, dst)
                 charts_copied += 1
 

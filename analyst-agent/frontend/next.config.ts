@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  // Suppress dev overlay for browser-extension hydration noise (bis_skin_checked)
+  devIndicators: false,
   async rewrites() {
     return [
       { source: '/sessions/:path*', destination: 'http://localhost:8000/sessions/:path*' },

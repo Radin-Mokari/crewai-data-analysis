@@ -90,15 +90,37 @@ export default function KernelView() {
               </div>
 
               {/* Output Box */}
-              {(cell.stdout || cell.stderr || cell.images?.length > 0) && (
+              {(cell.stdout || cell.stderr || cell.html || cell.svg || cell.images?.length > 0) && (
                 <div style={{ marginTop: '12px', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', background: 'transparent' }}>
                   <div style={{ padding: '6px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '10px', fontWeight: 600, borderBottom: '1px solid var(--border)', color: 'var(--text-muted)' }}>
                     OUTPUT
                     <button className="hover:text-[var(--text-primary)]" style={{ background: 'transparent' }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
                   </div>
                   <div className="p-3 text-[13px] font-mono" style={{ color: 'var(--text-primary)' }}>
+                    {/* HTML output (DataFrames, tables, etc.) */}
+                    {cell.html && (
+                      <div
+                        className="dataframe-output overflow-x-auto mb-2"
+                        dangerouslySetInnerHTML={{ __html: cell.html }}
+                        style={{
+                          maxWidth: '100%',
+                          fontSize: '12px',
+                        }}
+                      />
+                    )}
+                    {/* SVG output */}
+                    {cell.svg && (
+                      <div
+                        className="svg-output mb-2"
+                        dangerouslySetInnerHTML={{ __html: cell.svg }}
+                        style={{ maxWidth: '100%' }}
+                      />
+                    )}
+                    {/* Plain text output */}
                     {cell.stdout && <pre className="m-0 whitespace-pre-wrap">{cell.stdout}</pre>}
+                    {/* Error output */}
                     {cell.stderr && <pre className="m-0 whitespace-pre-wrap text-[var(--accent-red)]">{cell.stderr}</pre>}
+                    {/* PNG images */}
                     {cell.images?.map((img, i) => (
                       <img key={i} src={`/files/charts/${img.split(/[\\/]/).pop()}`} alt="output" className="mt-2 rounded border border-[var(--border)] max-w-full" />
                     ))}

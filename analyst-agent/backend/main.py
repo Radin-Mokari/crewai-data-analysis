@@ -98,6 +98,15 @@ async def run_analysis(session_id, dataset_path, prompt):
     try:
         result = await orchestrator.run(dataset_path, prompt)
         db.save_result(session_id, result)
+
+        # Automatically save results to analysis_results/run_<timestamp>/
+        bundle = orchestrator.save_results_bundle(str(ANALYSIS_RESULTS_DIR))
+        await ws_manager.broadcast({
+            "type": "results_saved",
+            "content": bundle,
+            "timestamp": datetime.now().isoformat(),
+        })
+
         with _orch_lock:
             _last_completed[session_id] = orchestrator
         await ws_manager.broadcast({"type": "done", "content": session_id, "timestamp": ""})
@@ -132,6 +141,16 @@ async def run_single_agent_task(session_id, dataset_path, agent_name, prompt):
     try:
         result = await orchestrator.run_single_specialist(dataset_path, agent_name, prompt)
         db.save_result(session_id, result)
+
+        # When report agent completes, save results to analysis_results/
+        if agent_name == "report":
+            bundle = orchestrator.save_results_bundle(str(ANALYSIS_RESULTS_DIR))
+            await ws_manager.broadcast({
+                "type": "results_saved",
+                "content": bundle,
+                "timestamp": datetime.now().isoformat(),
+            })
+
         with _orch_lock:
             _last_completed[session_id] = orchestrator
         await ws_manager.broadcast({"type": "done", "content": session_id, "timestamp": ""})
