@@ -52,12 +52,11 @@ class WebSocketManager:
                 await self._send_event(event)
             logger.info("[WS] Buffer replay complete")
 
-    def disconnect(self):
-        """Mark the WebSocket as disconnected."""
-        was_connected = self._connected
-        self.active = None
-        self._connected = False
-        if was_connected:
+    def disconnect(self, websocket: WebSocket):
+        """Mark the WebSocket as disconnected, only if it is the active one."""
+        if self.active == websocket:
+            self.active = None
+            self._connected = False
             logger.info("[WS] Client disconnected")
 
     async def broadcast(self, event: dict):
@@ -97,15 +96,15 @@ class WebSocketManager:
             return True
         except WebSocketDisconnect:
             logger.warning("[WS] WebSocketDisconnect during send")
-            self.disconnect()
+            self.disconnect(self.active)
             return False
         except RuntimeError as e:
             logger.warning(f"[WS] RuntimeError during send: {e}")
-            self.disconnect()
+            self.disconnect(self.active)
             return False
         except Exception as e:
             logger.error(f"[WS] Unexpected error during send: {e}")
-            self.disconnect()
+            self.disconnect(self.active)
             return False
 
     def get_stats(self) -> dict:

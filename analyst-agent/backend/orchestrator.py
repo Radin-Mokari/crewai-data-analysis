@@ -209,7 +209,7 @@ class AnalysisOrchestrator:
     # Path A — Full Analysis (Manager-driven)
     # -----------------------------------------------------------------------
 
-    async def run(self, dataset_path: str, user_prompt: str) -> dict:
+    async def run(self, dataset_path: str, user_prompt: str, messages: list = None) -> dict:
         try:
             self.tool.start_kernel()
             await self._emit("progress", "Starting Jupyter kernel...")
@@ -222,7 +222,7 @@ class AnalysisOrchestrator:
             max_iterations = 10
             self._skipped_this_run = []  # Reset at start of each analysis
             for iteration in range(max_iterations):
-                snapshot = self._build_snapshot(user_prompt, self._skipped_this_run)
+                snapshot = self._build_snapshot(user_prompt, self._skipped_this_run, messages)
                 await self._emit("agent_thought", f"[Manager] OBSERVE (iteration {iteration + 1}):\n{snapshot[:500]}")
 
                 decision_text = await asyncio.to_thread(self._ask_manager, snapshot)
@@ -324,8 +324,6 @@ class AnalysisOrchestrator:
             self.state["errors"].append(str(e))
             await self._emit("progress", f"Error: {str(e)}")
             raise
-        finally:
-            self.tool.shutdown_kernel()
 
         self._save_report()
 
@@ -335,7 +333,7 @@ class AnalysisOrchestrator:
     # Path B — Direct Single Agent
     # -----------------------------------------------------------------------
 
-    async def run_single_specialist(self, dataset_path: str, agent_name: str, user_prompt: str) -> dict:
+    async def run_single_specialist(self, dataset_path: str, agent_name: str, user_prompt: str, messages: list = None) -> dict:
         if agent_name not in self.VALID_SPECIALISTS:
             raise ValueError(f"Unknown specialist: {agent_name}")
 
@@ -401,7 +399,7 @@ class AnalysisOrchestrator:
     # Manager Helpers
     # -----------------------------------------------------------------------
 
-    def _build_snapshot(self, user_prompt: str, skipped_agents: list[str] | None = None) -> str:
+    def _build_snapshot(self, user_prompt: str, skipped_agents: list[str] | None = None, messages: list = None) -> str:
         profile = self.state.get("profile") or {}
         shape = profile.get('shape', [0, 0])
         n_rows = shape[0] if len(shape) > 0 else 0
@@ -413,6 +411,10 @@ class AnalysisOrchestrator:
         dup_pct = (duplicates / n_rows * 100) if n_rows > 0 else 0
 
         lines = []
+
+        if messages:
+            history = "\n".join([f"[{m.get('role', 'unknown').upper()}]: {m.get('content', '')}" for m in messages[-5:]])
+            lines.append(f"--- RECENT CONVERSATION HISTORY ---\n{history}\n----------------------------------\n")
 
         # CRITICAL: If agents were just skipped, tell the Manager FIRST
         if skipped_agents:
@@ -426,7 +428,7 @@ class AnalysisOrchestrator:
             lines.append("")
 
         lines.extend([
-            f"USER REQUEST: {user_prompt}",
+            f"CURRENT USER REQUEST: {user_prompt}",
             f"DATASET: {shape} ({n_rows} rows)",
             f"COLUMNS: {profile.get('columns', [])}",
             f"NUMERIC: {profile.get('numeric_columns', [])}",

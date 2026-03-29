@@ -577,7 +577,7 @@ def _memory_usage():
     # Agent-Facing Method (CrewAI Tool Interface)
     # =========================================================================
 
-    def _run(self, code: str, agent_name: str = "system", timeout: int = None) -> str:
+    def _run(self, code: str, agent_name: str = "system", timeout: int = None, cell_type: str = "code") -> str:
         """
         Execute code as a new cell in the Jupyter kernel.
 
@@ -585,6 +585,7 @@ def _memory_usage():
             code: Python code to execute
             agent_name: Name of the agent executing this cell
             timeout: Optional timeout in seconds (default: 120)
+            cell_type: "code" or "markdown"
 
         Returns:
             JSON string with execution results
@@ -599,6 +600,7 @@ def _memory_usage():
                     "success": False,
                     "cell_id": None,
                     "execution_count": 0,
+                    "cell_type": cell_type,
                 })
 
         # Check kernel health and restart if needed
@@ -612,6 +614,7 @@ def _memory_usage():
                     "success": False,
                     "cell_id": None,
                     "execution_count": 0,
+                    "cell_type": cell_type,
                 })
 
         # Inherit current agent name if caller didn't specify
@@ -624,17 +627,32 @@ def _memory_usage():
 
         cell_id = f"cell_{exec_count}_{uuid.uuid4().hex[:6]}"
 
-        logger.debug(f"[Execute] Cell {cell_id} by {agent_name}: {code[:80]}...")
+        logger.debug(f"[Execute] Cell {cell_id} by {agent_name} ({cell_type}): {code[:80]}...")
 
-        # Execute code
-        msg_id = self._kc.execute(code)
-        output = self._collect_output(msg_id, agent_name, timeout=timeout)
+        if cell_type == "markdown":
+            output = {
+                "stdout": "",
+                "stderr": "",
+                "html": "",
+                "svg": "",
+                "latex": "",
+                "markdown": code,
+                "json_data": [],
+                "images": [],
+                "success": True,
+                "execution_status": "ok",
+            }
+        else:
+            # Execute code
+            msg_id = self._kc.execute(code)
+            output = self._collect_output(msg_id, agent_name, timeout=timeout)
 
         # Build cell record
         cell = {
             "cell_id": cell_id,
             "agent": agent_name,
             "code": code,
+            "cell_type": cell_type,
             "stdout": output["stdout"],
             "stderr": output["stderr"],
             "html": output["html"],
@@ -665,6 +683,9 @@ def _memory_usage():
             "success": output["success"],
             "cell_id": cell_id,
             "execution_count": exec_count,
+            "code": code,
+            "agent": agent_name,
+            "cell_type": cell_type,
         })
 
     # =========================================================================

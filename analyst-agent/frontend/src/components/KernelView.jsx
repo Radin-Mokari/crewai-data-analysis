@@ -5,6 +5,92 @@ import Prism from 'prismjs';
 import 'prismjs/components/prism-python';
 import ReactMarkdown from 'react-markdown';
 
+function EditableCodeBlock({ code, cellType, cellId, onRun, onChange, onDelete }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [value, setValue] = useState(code || '');
+
+  useEffect(() => {
+    if (!isEditing) setValue(code || '');
+  }, [code, isEditing]);
+
+  const handleBlur = () => {
+    setIsEditing(false);
+    if (value !== code) {
+      onChange(cellId, value);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      setIsEditing(false);
+      onRun(cellId, value);
+    }
+  };
+
+  const isMarkdown = cellType === 'markdown';
+
+  return (
+    <div className="rounded-xl overflow-hidden relative group" style={{ background: isMarkdown ? 'transparent' : 'var(--surface)', border: isMarkdown ? '1px solid transparent' : '1px solid var(--border)' }}>
+      {/* Absolute action bar top right */}
+      <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+        {!isEditing && (
+          <>
+            <button onClick={() => setIsEditing(true)} className="p-1.5 rounded bg-[var(--surface-hover)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-white" title="Edit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+            </button>
+            <button onClick={() => onDelete(cellId)} className="p-1.5 rounded bg-[rgba(248,81,73,0.1)] border border-[rgba(248,81,73,0.3)] text-[var(--accent-red)] hover:bg-[var(--accent-red)] hover:text-white" title="Delete">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </>
+        )}
+      </div>
+
+      {isMarkdown ? (
+        <div className="p-2" onDoubleClick={() => setIsEditing(true)}>
+          {isEditing ? (
+            <textarea
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onBlur={handleBlur}
+              onKeyDown={handleKeyDown}
+              className="w-full m-0 p-3 outline-none resize-none rounded-md"
+              style={{ fontSize: '14px', lineHeight: '1.6', background: 'var(--surface)', color: 'var(--text-primary)', border: '1px solid var(--border-light)', minHeight: `${Math.max(((value || '').split('\n').length)*24, 60)}px` }}
+            />
+          ) : (
+            <div className="prose prose-sm dark:prose-invert max-w-none min-h-[40px] p-2 hover:bg-[var(--surface-hover)] rounded-md cursor-pointer transition-colors">
+              <ReactMarkdown>{code || '*Double click to edit text*'}</ReactMarkdown>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex">
+          <div className="py-3 px-3 text-right select-none" style={{ color: 'var(--text-muted)', fontSize: '12px', fontFamily: 'monospace', minWidth: '36px', borderRight: '1px solid var(--border-light)' }}>
+            {(isEditing ? value : (code || '')).split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
+          </div>
+          
+          {isEditing ? (
+            <textarea
+              autoFocus
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onBlur={handleBlur}
+              onKeyDown={handleKeyDown}
+              className="flex-1 m-0 p-3 outline-none resize-none"
+              style={{ fontSize: '13px', lineHeight: '1.5', background: 'transparent', color: 'var(--text-primary)', fontFamily: 'monospace', minHeight: `${Math.max(((value || '').split('\n').length)*24, 60)}px` }}
+            />
+          ) : (
+            <pre className="flex-1 m-0 p-3 overflow-x-auto" style={{ fontSize: '13px', lineHeight: '1.5' }} onDoubleClick={() => setIsEditing(true)}>
+              <code className="language-python">{code || ''}</code>
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Agent badge colors
 const AGENT_COLORS = {
   inspection: '#6366f1',  // indigo
@@ -21,6 +107,7 @@ const AGENT_COLORS = {
 };
 
 export default function KernelView() {
+  const activeSession = useSessionStore((s) => s.activeSession);
   const cells = useSessionStore((s) => s.cells);
   const isRunning = useSessionStore((s) => s.isRunning);
   const connected = useSessionStore((s) => s.connected);
@@ -32,6 +119,21 @@ export default function KernelView() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [cells]);
 
   // Fetch kernel stats periodically
+  useEffect(() => {
+    if (activeSession?.id && !isRunning) {
+      console.log('[KernelView] Loading cells for session:', activeSession.id);
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      fetch(`/kernel/cells${ds}`)
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            useSessionStore.setState({ cells: data });
+          }
+        })
+        .catch(e => console.error('[KernelView] Failed to load previous cells:', e));
+    }
+  }, [activeSession?.id, isRunning]);
+
   useEffect(() => {
     const fetchStats = async () => {
       try {
@@ -65,7 +167,8 @@ export default function KernelView() {
   const handleRestart = async () => {
     if (!confirm('Restart kernel? This will clear all variables.')) return;
     try {
-      const res = await fetch('/kernel/restart', { method: 'POST' });
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      const res = await fetch(`/kernel/restart${ds}`, { method: 'POST' });
       const data = await res.json();
       console.log('[KernelView] Restart result:', data);
     } catch (e) {
@@ -76,7 +179,8 @@ export default function KernelView() {
   const handleRunAllCells = async () => {
     try {
       setRunning(true);
-      const res = await fetch('/kernel/run-all', { method: 'POST' });
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      const res = await fetch(`/kernel/run-all${ds}`, { method: 'POST' });
       const data = await res.json();
       console.log('[KernelView] Run all result:', data);
     } catch (e) {
@@ -86,13 +190,77 @@ export default function KernelView() {
     }
   };
 
-  const handleRerunCell = async (cellId) => {
+  const handleRerunCell = async (cellId, newCode = null) => {
     try {
-      const res = await fetch(`/kernel/cells/${cellId}/rerun`, { method: 'POST' });
-      const data = await res.json();
-      console.log('[KernelView] Rerun cell result:', data);
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      if (newCode !== null) {
+        await fetch(`/kernel/cells/${cellId}/edit-and-rerun${ds}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: newCode })
+        });
+      } else {
+        await fetch(`/kernel/cells/${cellId}/rerun${ds}`, { method: 'POST' });
+      }
     } catch (e) {
       console.error('[KernelView] Rerun cell failed:', e);
+    }
+  };
+
+  const handleEditCell = async (cellId, newCode) => {
+    try {
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      await fetch(`/kernel/cells/${cellId}${ds}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: newCode })
+      });
+    } catch (e) {
+      console.error('[KernelView] Edit failed:', e);
+    }
+  };
+
+  const handleDeleteCell = async (cellId) => {
+    if (!confirm('Delete this cell?')) return;
+    try {
+      const ds = activeSession?.dataset_path ? `?dataset_path=${encodeURIComponent(activeSession.dataset_path)}` : '';
+      await fetch(`/kernel/cells/${cellId}${ds}`, { method: 'DELETE' });
+    } catch (e) {
+      console.error('[KernelView] Delete failed:', e);
+    }
+  };
+
+  const handleAddCell = async () => {
+    try {
+      await fetch(`/kernel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          code: "# New code cell\n", 
+          agent_name: "user", 
+          cell_type: "code",
+          dataset_path: activeSession?.dataset_path || null
+        })
+      });
+    } catch (e) {
+      console.error('[KernelView] Add code cell failed:', e);
+    }
+  };
+
+  const handleAddTextCell = async () => {
+    try {
+      await fetch(`/kernel/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          code: "Enter your markdown text here...", 
+          agent_name: "user", 
+          cell_type: "markdown",
+          dataset_path: activeSession?.dataset_path || null
+        })
+      });
+    } catch (e) {
+      console.error('[KernelView] Add text cell failed:', e);
     }
   };
 
@@ -238,17 +406,15 @@ export default function KernelView() {
                 )}
               </div>
 
-              {/* Code Box */}
-              <div className="rounded-xl overflow-hidden" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-                <div className="flex">
-                  <div className="py-3 px-3 text-right select-none" style={{ color: 'var(--text-muted)', fontSize: '12px', fontFamily: 'monospace', minWidth: '36px', borderRight: '1px solid var(--border-light)' }}>
-                    {cell.code.split('\n').map((_, i) => <div key={i}>{i + 1}</div>)}
-                  </div>
-                  <pre className="flex-1 m-0 p-3 overflow-x-auto" style={{ fontSize: '13px', lineHeight: '1.5' }}>
-                    <code className="language-python">{cell.code}</code>
-                  </pre>
-                </div>
-              </div>
+              {/* Editable Code Box */}
+              <EditableCodeBlock
+                code={cell.code}
+                cellType={cell.cell_type}
+                cellId={cell.cell_id}
+                onRun={handleRerunCell}
+                onChange={handleEditCell}
+                onDelete={handleDeleteCell}
+              />
 
               {/* Output Box */}
               {(cell.stdout || cell.stderr || cell.html || cell.svg || cell.latex || cell.markdown || cell.images?.length > 0) && (
@@ -336,15 +502,25 @@ export default function KernelView() {
           </div>
         ))}
 
-        {/* Add Cell Button */}
-        <div className="flex justify-center mt-4">
+        {/* Add Cell Buttons */}
+        <div className="flex justify-center gap-4 mt-6 mb-8">
           <button
-            className="px-4 py-2 rounded-full text-xs font-medium transition-colors flex items-center gap-2"
-            style={{ border: '1px dashed var(--border-light)', color: 'var(--text-muted)' }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--text-secondary)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-light)'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+            onClick={handleAddCell}
+            className="px-4 py-2 rounded-full text-xs font-medium transition-colors flex items-center gap-2 cursor-pointer"
+            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}
           >
-            + Code + Text
+            + Code
+          </button>
+          <button
+            onClick={handleAddTextCell}
+            className="px-4 py-2 rounded-full text-xs font-medium transition-colors flex items-center gap-2 cursor-pointer"
+            style={{ border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)'; }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--surface)'; }}
+          >
+            + Text
           </button>
         </div>
         <div ref={bottomRef} />

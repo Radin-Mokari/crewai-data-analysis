@@ -22,16 +22,33 @@ class SessionDB:
                 completed_at TEXT
             )
         """)
+        try:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN messages_json TEXT DEFAULT '[]'")
+        except sqlite3.OperationalError:
+            pass
         self.db.commit()
 
     def create_session(self, dataset_path, prompt):
         sid = str(uuid.uuid4())[:8]
+        # Initialize with the user's first prompt as a message
+        initial_messages = [{"role": "user", "content": prompt, "timestamp": datetime.now().isoformat()}]
         self.db.execute(
-            "INSERT INTO sessions (id, dataset_path, prompt) VALUES (?,?,?)",
-            (sid, dataset_path, prompt),
+            "INSERT INTO sessions (id, dataset_path, prompt, messages_json) VALUES (?,?,?,?)",
+            (sid, dataset_path, prompt, json.dumps(initial_messages)),
         )
         self.db.commit()
         return sid
+
+    def append_message(self, session_id, role, content):
+        row = self.db.execute("SELECT messages_json FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if row:
+            messages = json.loads(row["messages_json"] or "[]")
+            messages.append({"role": role, "content": content, "timestamp": datetime.now().isoformat()})
+            self.db.execute(
+                "UPDATE sessions SET messages_json=? WHERE id=?",
+                (json.dumps(messages), session_id)
+            )
+            self.db.commit()
 
     def save_result(self, session_id, result):
         self.db.execute(
@@ -62,5 +79,9 @@ class SessionDB:
             result = dict(row)
             if result.get("result_json"):
                 result["result"] = json.loads(result["result_json"])
+            if result.get("messages_json"):
+                result["messages"] = json.loads(result["messages_json"])
+            else:
+                result["messages"] = []
             return result
         return None

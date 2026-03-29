@@ -92,11 +92,17 @@ async def upload_csv(file: UploadFile = File(...)):
     return {"file_path": str(file_path), "filename": file.filename}
 
 
+from typing import Optional
+
 # --- Path A: Full Analysis (fresh orchestrator, kernel shutdown on complete) ---
 @app.post("/analyze")
-async def start_analysis(dataset_path: str, prompt: str, background_tasks: BackgroundTasks):
-    _remove_orchestrator(dataset_path)
-    session_id = db.create_session(dataset_path, prompt)
+async def start_analysis(dataset_path: str, prompt: str, background_tasks: BackgroundTasks, session_id: Optional[str] = None):
+    if not session_id:
+        _remove_orchestrator(dataset_path)
+        session_id = db.create_session(dataset_path, prompt)
+    else:
+        db.append_message(session_id, "user", prompt)
+    
     background_tasks.add_task(run_analysis, session_id, dataset_path, prompt)
     return {"session_id": session_id, "status": "started"}
 
@@ -105,13 +111,18 @@ async def run_analysis(session_id, dataset_path, prompt):
     logger.info(f"[Analysis] Starting session {session_id} for {dataset_path}")
     logger.info(f"[Analysis] WebSocket connected: {ws_manager.is_connected}")
 
-    orchestrator = _make_orchestrator()
+    session_data = db.get_session(session_id)
+    messages = session_data.get("messages", []) if session_data else []
+
+    orchestrator = _get_or_create_orchestrator(dataset_path)
     try:
-        result = await orchestrator.run(dataset_path, prompt)
+        result = await orchestrator.run(dataset_path, prompt, messages)
         logger.info(f"[Analysis] Session {session_id} completed successfully")
         logger.info(f"[Analysis] Completed agents: {result.get('completed', [])}")
         logger.info(f"[Analysis] Charts created: {len(result.get('charts', []))}")
 
+        # Final assistant message summarizing completion
+        db.append_message(session_id, "assistant", "Analysis completed.")
         db.save_result(session_id, result)
 
         # Automatically save results to analysis_results/run_<timestamp>/
@@ -128,6 +139,7 @@ async def run_analysis(session_id, dataset_path, prompt):
         logger.info(f"[Analysis] Session {session_id} done event broadcast")
     except Exception as e:
         logger.error(f"[Analysis] Session {session_id} failed: {e}", exc_info=True)
+        db.append_message(session_id, "assistant", f"An error occurred: {str(e)}")
         db.save_error(session_id, str(e))
         await ws_manager.broadcast({"type": "done", "content": f"error:{session_id}", "timestamp": ""})
 
@@ -139,6 +151,7 @@ async def run_single_agent(
     agent_name: str,
     prompt: str,
     background_tasks: BackgroundTasks,
+    session_id: Optional[str] = None
 ):
     valid = [
         "cleaning", "eda", "visualization", "statistics",
@@ -146,7 +159,12 @@ async def run_single_agent(
     ]
     if agent_name not in valid:
         return {"error": f"Unknown agent. Must be one of: {valid}"}
-    session_id = db.create_session(dataset_path, f"[{agent_name}] {prompt}")
+    
+    if not session_id:
+        session_id = db.create_session(dataset_path, f"[{agent_name}] {prompt}")
+    else:
+        db.append_message(session_id, "user", f"[{agent_name}] {prompt}")
+
     background_tasks.add_task(
         run_single_agent_task, session_id, dataset_path, agent_name, prompt
     )
@@ -157,10 +175,15 @@ async def run_single_agent_task(session_id, dataset_path, agent_name, prompt):
     logger.info(f"[SingleAgent] Starting {agent_name} for session {session_id}")
     logger.info(f"[SingleAgent] WebSocket connected: {ws_manager.is_connected}")
 
+    session_data = db.get_session(session_id)
+    messages = session_data.get("messages", []) if session_data else []
+
     orchestrator = _get_or_create_orchestrator(dataset_path)
     try:
-        result = await orchestrator.run_single_specialist(dataset_path, agent_name, prompt)
+        result = await orchestrator.run_single_specialist(dataset_path, agent_name, prompt, messages)
         logger.info(f"[SingleAgent] {agent_name} completed for session {session_id}")
+        
+        db.append_message(session_id, "assistant", f"Specialist {agent_name} completed.")
         db.save_result(session_id, result)
 
         # When report agent completes, save results to analysis_results/
@@ -178,6 +201,7 @@ async def run_single_agent_task(session_id, dataset_path, agent_name, prompt):
         logger.info(f"[SingleAgent] Session {session_id} done event broadcast")
     except Exception as e:
         logger.error(f"[SingleAgent] {agent_name} failed for session {session_id}: {e}", exc_info=True)
+        db.append_message(session_id, "assistant", f"An error occurred: {str(e)}")
         db.save_error(session_id, str(e))
         await ws_manager.broadcast({"type": "done", "content": f"error:{session_id}", "timestamp": ""})
 
@@ -228,13 +252,22 @@ async def save_results(session_id: str):
 class CellExecuteBody(BaseModel):
     code: str
     agent_name: str = "user"
+    cell_type: str = "code"
+    dataset_path: Optional[str] = None
 
 class CellEditBody(BaseModel):
     code: str
 
 
-def _find_active_tool() -> JupyterSessionTool | None:
+def _find_active_tool(dataset_path: Optional[str] = None) -> JupyterSessionTool | None:
     """Return the JupyterSessionTool from any active orchestrator."""
+    if dataset_path:
+        orch = _get_or_create_orchestrator(dataset_path)
+        tool = orch.tool
+        if tool._km is None:
+            tool.start_kernel()
+        return tool
+
     with _orch_lock:
         for orch in _active_orchestrators.values():
             if orch.tool._km is not None:
@@ -242,15 +275,22 @@ def _find_active_tool() -> JupyterSessionTool | None:
         for orch in _last_completed.values():
             if orch.tool._km is not None:
                 return orch.tool
-    return None
+
+    # Fallback to a default scratchpad kernel if nothing is running and no dataset_path was provided
+    orch = _get_or_create_orchestrator("scratchpad_session")
+    tool = orch.tool
+    if tool._km is None:
+        tool.start_kernel()
+    return tool
 
 
 @app.post("/kernel/execute")
 async def kernel_execute(body: CellExecuteBody):
-    tool = _find_active_tool()
+    tool = _find_active_tool(body.dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
-    result_json = tool._run(body.code, agent_name=body.agent_name)
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
+        
+    result_json = tool._run(body.code, agent_name=body.agent_name, cell_type=body.cell_type)
     record = json.loads(result_json)
     await ws_manager.broadcast({
         "type": "cell_update",
@@ -261,18 +301,18 @@ async def kernel_execute(body: CellExecuteBody):
 
 
 @app.get("/kernel/cells")
-async def kernel_get_cells():
-    tool = _find_active_tool()
+async def kernel_get_cells(dataset_path: Optional[str] = None):
+    tool = _find_active_tool(dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
     return tool.get_cells()
 
 
 @app.put("/kernel/cells/{cell_id}")
-async def kernel_edit_cell(cell_id: str, body: CellEditBody):
-    tool = _find_active_tool()
+async def kernel_edit_cell(cell_id: str, body: CellEditBody, dataset_path: Optional[str] = None):
+    tool = _find_active_tool(dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
     record = tool.edit_cell(cell_id, body.code)
     if record is None:
         return JSONResponse(status_code=404, content={"error": f"Cell {cell_id} not found."})
@@ -285,10 +325,10 @@ async def kernel_edit_cell(cell_id: str, body: CellEditBody):
 
 
 @app.delete("/kernel/cells/{cell_id}")
-async def kernel_delete_cell(cell_id: str):
-    tool = _find_active_tool()
+async def kernel_delete_cell(cell_id: str, dataset_path: Optional[str] = None):
+    tool = _find_active_tool(dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
     removed = tool.delete_cell(cell_id)
     if not removed:
         return JSONResponse(status_code=404, content={"error": f"Cell {cell_id} not found."})
@@ -301,10 +341,10 @@ async def kernel_delete_cell(cell_id: str):
 
 
 @app.post("/kernel/cells/{cell_id}/rerun")
-async def kernel_rerun_cell(cell_id: str):
-    tool = _find_active_tool()
+async def kernel_rerun_cell(cell_id: str, dataset_path: Optional[str] = None):
+    tool = _find_active_tool(dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
     record = tool.rerun_cell(cell_id)
     if record is None:
         return JSONResponse(status_code=404, content={"error": f"Cell {cell_id} not found."})
@@ -317,10 +357,10 @@ async def kernel_rerun_cell(cell_id: str):
 
 
 @app.post("/kernel/cells/{cell_id}/edit-and-rerun")
-async def kernel_edit_and_rerun(cell_id: str, body: CellEditBody):
-    tool = _find_active_tool()
+async def kernel_edit_and_rerun(cell_id: str, body: CellEditBody, dataset_path: Optional[str] = None):
+    tool = _find_active_tool(dataset_path)
     if not tool:
-        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+        return JSONResponse(status_code=400, content={"error": "No dataset_path provided and no active kernel found."})
     record = tool.edit_and_rerun_cell(cell_id, body.code)
     if record is None:
         return JSONResponse(status_code=404, content={"error": f"Cell {cell_id} not found."})
@@ -476,7 +516,7 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except Exception:
-        ws_manager.disconnect()
+        ws_manager.disconnect(websocket)
 
 
 @app.on_event("shutdown")

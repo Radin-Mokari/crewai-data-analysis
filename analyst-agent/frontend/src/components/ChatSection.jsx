@@ -93,14 +93,23 @@ export default function ChatSection() {
 
     const effectivePrompt = prompt.trim() || 'Analyze this dataset completely';
 
-    clearCurrent();
+    // DO NOT clear current if using same active session (to keep history visible before refresh)
+    if (!activeSession || activeSession.dataset_path !== ds) {
+        clearCurrent();
+    }
+    
     setCompletedSessionId(null);
     setRunning(true);
+    setPrompt(''); // clear input
 
     const params = new URLSearchParams({
       dataset_path: ds,
       prompt: effectivePrompt,
     });
+    
+    if (activeSession && activeSession.dataset_path === ds) {
+        params.append('session_id', activeSession.id);
+    }
 
     let endpoint = `/analyze?${params.toString()}`;
     if (selectedAgent) {
@@ -109,6 +118,9 @@ export default function ChatSection() {
         agent_name: selectedAgent,
         prompt: effectivePrompt,
       });
+      if (activeSession && activeSession.dataset_path === ds) {
+          agentParams.append('session_id', activeSession.id);
+      }
       endpoint = `/agent/run?${agentParams.toString()}`;
     }
 
@@ -146,51 +158,98 @@ export default function ChatSection() {
 
       {/* Chat Area */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 160px 24px' }}>
-        {activeSession?.prompt && (
-          <div className="mb-8 flex justify-end">
-            <div className="max-w-[80%] p-4 rounded-2xl rounded-tr-sm" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
-              <p className="text-[15px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
-                {activeSession.prompt}
-              </p>
-              <div className="text-[11px] mt-2 text-right" style={{ color: 'var(--text-muted)' }}>
-                {new Date(activeSession.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        
+        {/* Render History Messages from DB */}
+        {activeSession?.messages?.map((msg, i) => {
+          if (msg.role === 'user') {
+            return (
+              <div key={i} className="mb-8 flex justify-end">
+                <div className="max-w-[80%] p-4 rounded-2xl rounded-tr-sm" style={{ background: 'var(--surface)', border: '1px solid var(--border)' }}>
+                  <p className="text-[15px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                    {msg.content}
+                  </p>
+                  <div className="text-[11px] mt-2 text-right" style={{ color: 'var(--text-muted)' }}>
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            );
+          } else {
+            return (
+              <div key={i} className="mb-8 flex gap-4">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1" style={{ background: 'var(--accent-blue)', color: '#fff' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="10" rx="2"></rect>
+                    <circle cx="12" cy="5" r="2"></circle>
+                    <path d="M12 7v4"></path>
+                    <line x1="8" y1="16" x2="8" y2="16"></line>
+                    <line x1="16" y1="16" x2="16" y2="16"></line>
+                  </svg>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Dev Agent</div>
+                  <div className="prose-dark mt-2 text-[15px]">
+                    <Markdown>{msg.content}</Markdown>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+        })}
 
-        {agentThoughts.length > 0 && (
+        {/* Live execution / Streaming thoughts */}
+        {(isRunning || agentThoughts.length > 0) && (
           <div className="mb-8 flex gap-4">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1" style={{ background: 'var(--accent-blue)', color: '#fff' }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-1" style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="11" width="18" height="10" rx="2"></rect>
                 <circle cx="12" cy="5" r="2"></circle>
                 <path d="M12 7v4"></path>
-                <line x1="8" y1="16" x2="8" y2="16"></line>
-                <line x1="16" y1="16" x2="16" y2="16"></line>
               </svg>
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Dev Agent</div>
+              <div className="text-sm font-medium mb-2" style={{ color: 'var(--text-primary)' }}>Dev Agent Thinking...</div>
 
-              <div className="rounded-xl mb-3" style={{ border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                <div className="px-3 py-2 flex items-center gap-2 text-[11px] font-semibold tracking-wider" style={{ color: 'var(--text-secondary)' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="6 9 12 15 18 9"></polyline>
-                  </svg>
-                  THOUGHT FOR 1S
-                </div>
-                <div className="px-4 pb-3 text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                  <pre className="whitespace-pre-wrap font-sans m-0">{agentThoughts[agentThoughts.length - 1].content}</pre>
-                </div>
+              <div className="flex flex-col gap-2 mb-4">
+                {agentThoughts.map((t, idx) => {
+                  let title = `AGENT THOUGHT STEP ${idx + 1}`;
+                  if (typeof t.content === 'string') {
+                    if (t.content.includes('OBSERVE')) title = 'Manager Analyzing Data State';
+                    else if (t.content.includes('DECIDE: DELEGATE')) {
+                      const match = t.content.match(/DELEGATE:\s*(\w+)/i);
+                      title = match ? `Manager Delegating to ${match[1].toUpperCase()}` : 'Manager Delegating Task';
+                    }
+                    else if (t.content.includes('DECIDE: COMPLETE')) title = 'Manager Marked Analysis Complete';
+                    else if (t.content.includes('DECIDE:')) title = 'Manager Making Decision';
+                  }
+                  
+                  // Keep the latest thought open by default
+                  const isOpen = idx === agentThoughts.length - 1;
+
+                  return (
+                    <details key={idx} className="rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--surface)] group" open={isOpen}>
+                      <summary className="px-3 py-2 cursor-pointer flex items-center justify-between text-[11.5px] font-semibold tracking-wide text-[var(--text-secondary)] hover:bg-[var(--surface-hover)] outline-none" style={{ color: t.content.includes('DECIDE') ? 'var(--accent-blue)' : 'var(--text-secondary)' }}>
+                        <div className="flex items-center gap-2">
+                          <svg className="transform transition-transform group-open:rotate-90" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                          {title}
+                        </div>
+                      </summary>
+                      <div className="px-4 pb-3 pt-1 text-[13px] leading-relaxed text-[var(--text-secondary)] border-t border-[var(--border-light)]">
+                        <pre className="whitespace-pre-wrap font-sans m-0">{t.content}</pre>
+                      </div>
+                    </details>
+                  );
+                })}
               </div>
 
-              {reportText ? (
+              {reportText && !isRunning ? (
                 <div className="prose-dark mt-4">
                   <Markdown>{reportText}</Markdown>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                <div className="flex items-center gap-2 text-sm mt-3" style={{ color: 'var(--text-primary)' }}>
                   {isRunning ? (
                     <>
                       <div className="w-4 h-4 rounded-full border-2 border-[var(--accent-blue)] border-t-transparent animate-spin" />
@@ -198,7 +257,7 @@ export default function ChatSection() {
                     </>
                   ) : (
                     <>
-                      <span>✨</span> Waiting for input...
+                      <span>✨</span> Execution Finished
                     </>
                   )}
                 </div>
@@ -207,7 +266,9 @@ export default function ChatSection() {
           </div>
         )}
         <div ref={bottomRef} />
-      </div>      {/* Prompt Island */}
+      </div>
+
+      {/* Prompt Island */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '48px 24px 24px 24px', background: 'linear-gradient(to top, var(--bg-chat) 70%, transparent)' }}>
         <div style={{ maxWidth: '48rem', margin: '0 auto', position: 'relative' }}>
           {/* Tools popover */}
