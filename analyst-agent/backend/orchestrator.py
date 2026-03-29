@@ -5,14 +5,19 @@ Supports Path A (full analysis) and Path B (single specialist).
 
 import asyncio
 import json
+import logging
 import re
 import shutil
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from crewai import Agent, Task, Crew, Process
 
 from backend.tools import JupyterSessionTool
+
+# Configure logging
+logger = logging.getLogger("orchestrator")
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +52,50 @@ print(f"Loaded {{DATASET_SHAPE[0]}} rows x {{DATASET_SHAPE[1]}} columns")
 
     profile_code = """
 import json as _json
+
+# Compute correlations for numeric columns
+_corr_matrix = df_raw[NUMERIC_COLUMNS].corr() if len(NUMERIC_COLUMNS) > 1 else None
+_top_correlations = []
+if _corr_matrix is not None:
+    for i, col1 in enumerate(NUMERIC_COLUMNS):
+        for col2 in NUMERIC_COLUMNS[i+1:]:
+            corr_val = abs(_corr_matrix.loc[col1, col2])
+            if corr_val > 0.5:
+                _top_correlations.append((col1, col2, round(corr_val, 3)))
+    _top_correlations.sort(key=lambda x: x[2], reverse=True)
+    _top_correlations = _top_correlations[:10]  # Top 10
+
+# Compute skewness for numeric columns
+_skewness = {}
+for col in NUMERIC_COLUMNS:
+    try:
+        _skewness[col] = round(float(df_raw[col].skew()), 3)
+    except:
+        pass
+_highly_skewed = [col for col, skew in _skewness.items() if abs(skew) > 1]
+
+# Identify binary columns
+_binary_columns = [col for col in df_raw.columns if df_raw[col].nunique() == 2]
+
+# Identify potential target columns (binary or low cardinality categorical)
+_potential_targets = [col for col in df_raw.columns if 2 <= df_raw[col].nunique() <= 10]
+
+# Check class balance for potential targets (for class_imbalance skip decision)
+_class_balance = {}
+for col in _binary_columns + [c for c in _potential_targets if c not in _binary_columns]:
+    try:
+        counts = df_raw[col].value_counts(normalize=True)
+        if len(counts) >= 2:
+            majority_pct = float(counts.iloc[0] * 100)
+            minority_pct = float(counts.iloc[1] * 100)
+            _class_balance[col] = {
+                'majority_pct': round(majority_pct, 1),
+                'minority_pct': round(minority_pct, 1),
+                'is_imbalanced': bool(majority_pct > 70)
+            }
+    except:
+        pass
+
 _profile = {
     'shape': list(df_raw.shape),
     'columns': list(df_raw.columns),
@@ -57,6 +106,12 @@ _profile = {
     'missing_pct': (df_raw.isnull().sum() / len(df_raw) * 100).round(1).to_dict(),
     'duplicates': int(df_raw.duplicated().sum()),
     'describe': df_raw.describe().round(2).to_dict(),
+    'top_correlations': _top_correlations,
+    'highly_skewed_columns': _highly_skewed,
+    'skewness': _skewness,
+    'binary_columns': _binary_columns,
+    'potential_targets': _potential_targets,
+    'class_balance': _class_balance,
 }
 print(_json.dumps(_profile))
 """
@@ -136,13 +191,19 @@ class AnalysisOrchestrator:
             "completed": [],
             "task_summaries": {},
             "charts": [],
+            "chart_descriptions": [],  # Track what each chart shows
             "errors": [],
             "redo_count": 0,
             "agent_redo_count": {},
             "report_text": "",
+            "quality_issues": {},  # Track quality issues per specialist
+            "improvement_attempts": {},  # Track improvement attempts
         }
         self._known_cell_count = 0
+        self._cell_lock = threading.Lock()  # Protect cell tracking from race conditions
         self._specialist_cells: dict[str, list[str]] = {}
+        self._skipped_this_run: list[str] = []  # Track agents skipped due to already-completed
+        self._event_count = 0  # Track number of events emitted for debugging
 
     # -----------------------------------------------------------------------
     # Path A — Full Analysis (Manager-driven)
@@ -159,8 +220,9 @@ class AnalysisOrchestrator:
             await self._emit_new_cells()
 
             max_iterations = 10
+            self._skipped_this_run = []  # Reset at start of each analysis
             for iteration in range(max_iterations):
-                snapshot = self._build_snapshot(user_prompt)
+                snapshot = self._build_snapshot(user_prompt, self._skipped_this_run)
                 await self._emit("agent_thought", f"[Manager] OBSERVE (iteration {iteration + 1}):\n{snapshot[:500]}")
 
                 decision_text = await asyncio.to_thread(self._ask_manager, snapshot)
@@ -169,20 +231,55 @@ class AnalysisOrchestrator:
                 decision = self._parse_decision(decision_text)
 
                 if decision["action"] == "COMPLETE":
-                    await self._emit("progress", "Analysis complete!")
-                    break
+                    # Enforce that report must be completed before we can truly complete
+                    if "report" not in self.state["completed"]:
+                        await self._emit("agent_thought", "[Manager] Cannot COMPLETE without running report. Auto-delegating to report...")
+                        # Force delegation to report
+                        decision = {
+                            "action": "DELEGATE",
+                            "specialist": "report",
+                            "instructions": "Synthesize all findings into a comprehensive markdown report.",
+                            "is_improvement": False,
+                        }
+                    else:
+                        await self._emit("progress", "Analysis complete!")
+                        break
 
                 if decision["action"] == "DELEGATE":
                     specialist_name = decision["specialist"]
                     instructions = decision["instructions"]
+                    is_improvement = decision.get("is_improvement", False)
 
-                    # Guard: don't re-run a specialist that already passed quality
-                    if specialist_name in self.state["completed"]:
-                        await self._emit("agent_thought", f"[Manager] Skipping {specialist_name} — already completed.")
+                    # Guard: limit improvement attempts to 2 per specialist
+                    if specialist_name in self.state["completed"] and not is_improvement:
+                        await self._emit("agent_thought", f"[Manager] Skipping {specialist_name} — already completed. Must pick a different agent.")
                         await self._emit("progress", f"Skipping {specialist_name} (already done)")
+                        # Track this so the next snapshot tells Manager to pick something else
+                        if specialist_name not in self._skipped_this_run:
+                            self._skipped_this_run.append(specialist_name)
                         continue
 
+                    if is_improvement:
+                        attempts = self.state["improvement_attempts"].get(specialist_name, 0)
+                        if attempts >= 2:
+                            await self._emit("agent_thought", f"[Manager] Max improvement attempts (2) reached for {specialist_name}. Moving on.")
+                            # Mark this specialist as improvement-exhausted so Manager knows to proceed
+                            if "improvement_exhausted" not in self.state:
+                                self.state["improvement_exhausted"] = []
+                            if specialist_name not in self.state["improvement_exhausted"]:
+                                self.state["improvement_exhausted"].append(specialist_name)
+                            # Clear visualization gaps since we can't improve further
+                            if specialist_name == "visualization":
+                                self.state["visualization_coverage"] = {}
+                                if "visualization" in self.state.get("quality_issues", {}):
+                                    del self.state["quality_issues"]["visualization"]
+                            continue
+                        self.state["improvement_attempts"][specialist_name] = attempts + 1
+                        await self._emit("progress", f"Improving {specialist_name} (attempt {attempts + 1}/2)...")
+
                     await self._emit("progress", f"Delegating to {specialist_name}...")
+                    # Clear skipped list since we're actually running an agent
+                    self._skipped_this_run = []
 
                     prior_cell_ids = self._specialist_cells.get(specialist_name)
 
@@ -304,36 +401,150 @@ class AnalysisOrchestrator:
     # Manager Helpers
     # -----------------------------------------------------------------------
 
-    def _build_snapshot(self, user_prompt: str) -> str:
+    def _build_snapshot(self, user_prompt: str, skipped_agents: list[str] | None = None) -> str:
         profile = self.state.get("profile") or {}
-        lines = [
+        shape = profile.get('shape', [0, 0])
+        n_rows = shape[0] if len(shape) > 0 else 0
+
+        # Calculate missing and duplicate percentages for skip decisions
+        missing_values = profile.get('missing_values', {})
+        total_missing = sum(missing_values.values())
+        duplicates = profile.get('duplicates', 0)
+        dup_pct = (duplicates / n_rows * 100) if n_rows > 0 else 0
+
+        lines = []
+
+        # CRITICAL: If agents were just skipped, tell the Manager FIRST
+        if skipped_agents:
+            remaining = [a for a in self.VALID_SPECIALISTS if a not in self.state["completed"]]
+            lines.append("=" * 50)
+            lines.append(f"⚠️  YOUR LAST DELEGATION TO {skipped_agents} WAS BLOCKED!")
+            lines.append(f"    Those agents are ALREADY COMPLETED.")
+            lines.append(f"    You MUST pick from: {remaining}")
+            lines.append(f"    Or say COMPLETE if the analysis is done.")
+            lines.append("=" * 50)
+            lines.append("")
+
+        lines.extend([
             f"USER REQUEST: {user_prompt}",
-            f"DATASET: {profile.get('shape', '?')}",
+            f"DATASET: {shape} ({n_rows} rows)",
             f"COLUMNS: {profile.get('columns', [])}",
             f"NUMERIC: {profile.get('numeric_columns', [])}",
             f"CATEGORICAL: {profile.get('categorical_columns', [])}",
-            f"MISSING VALUES: {profile.get('missing_values', {})}",
-            f"DUPLICATES: {profile.get('duplicates', 0)}",
-            f"COMPLETED TASKS: {self.state['completed']}",
-        ]
+        ])
+
+        # Cleaning skip criteria — make it obvious
+        lines.append("\n--- DATA QUALITY (for cleaning skip decision) ---")
+        lines.append(f"TOTAL MISSING VALUES: {total_missing}")
+        lines.append(f"DUPLICATES: {duplicates} ({dup_pct:.1f}% of rows)")
+        if total_missing == 0 and dup_pct < 1:
+            lines.append("→ DATA IS CLEAN: No missing values, duplicates < 1%")
+
+        # Add data characteristics (for manager to use when delegating)
+        lines.append("\n--- DATA CHARACTERISTICS ---")
+        top_corr = profile.get('top_correlations', [])
+        if top_corr:
+            lines.append(f"TOP CORRELATIONS (|r|>0.5): {top_corr[:5]}")
+        skewed = profile.get('highly_skewed_columns', [])
+        if skewed:
+            lines.append(f"HIGHLY SKEWED COLUMNS: {skewed}")
+        binary = profile.get('binary_columns', [])
+        if binary:
+            lines.append(f"BINARY COLUMNS: {binary}")
+        targets = profile.get('potential_targets', [])
+        if targets:
+            lines.append(f"POTENTIAL TARGETS: {targets}")
+
+        # Class balance info for class_imbalance skip decision
+        class_balance = profile.get('class_balance', {})
+        if class_balance:
+            imbalanced = [col for col, info in class_balance.items() if info.get('is_imbalanced')]
+            balanced = [col for col, info in class_balance.items() if not info.get('is_imbalanced')]
+            if imbalanced:
+                lines.append(f"IMBALANCED COLUMNS (>70/30): {imbalanced}")
+            if balanced:
+                lines.append(f"BALANCED COLUMNS (<70/30): {balanced}")
+            if not imbalanced:
+                lines.append("→ NO CLASS IMBALANCE: All potential targets are balanced")
+
+        lines.append(f"\n--- ANALYSIS STATUS ---")
+        lines.append(f"COMPLETED TASKS: {self.state['completed']}")
+
+        # Guide the Manager on what to do next
+        completed = self.state['completed']
+        viz_coverage = self.state.get("visualization_coverage", {})
+        viz_gaps = viz_coverage.get("gaps", [])
+        improvement_exhausted = self.state.get("improvement_exhausted", [])
+
+        # Show exhausted improvements prominently
+        if improvement_exhausted:
+            lines.append(f"\n⚠️ IMPROVEMENT EXHAUSTED FOR: {improvement_exhausted}")
+            lines.append("   Cannot improve further. Proceed to next step.")
+
+        # Case 1: Both EDA and visualization done → ready for report
+        if "visualization" in completed and "report" not in completed:
+            # If visualization improvements exhausted, don't suggest more improvements
+            if "visualization" in improvement_exhausted:
+                lines.append("→ READY FOR REPORT: Visualization complete (max improvements reached). Delegate to 'report' next.")
+            elif viz_gaps:
+                lines.append("→ VISUALIZATION GAPS DETECTED: Use IMPROVE:visualization to add missing charts before report.")
+            else:
+                lines.append("→ READY FOR REPORT: Visualizations created. Delegate to 'report' next.")
+        # Case 2: EDA done but not visualization → do visualization
+        elif "eda" in completed and "visualization" not in completed:
+            lines.append("→ NEXT STEP: EDA done. Delegate to 'visualization' with specific chart instructions.")
+        # Case 3: Nothing done yet → start with eda
+        elif "eda" not in completed and "visualization" not in completed:
+            lines.append("→ NEXT STEP: Start with 'eda' to explore the data.")
+
+        # Include chart descriptions if visualization was completed
+        if self.state.get("chart_descriptions"):
+            lines.append("\nCHARTS CREATED:")
+            for desc in self.state["chart_descriptions"]:
+                lines.append(f"  - {desc}")
+
+        # Include visualization coverage analysis for Manager to evaluate
+        viz_coverage = self.state.get("visualization_coverage")
+        if viz_coverage:
+            lines.append("\nVISUALIZATION COVERAGE ANALYSIS:")
+            lines.append(f"  Correlation charts: {'YES' if viz_coverage.get('has_correlation_viz') else 'NO'}")
+            lines.append(f"  Distribution charts: {'YES' if viz_coverage.get('has_distribution_viz') else 'NO'}")
+            lines.append(f"  Categorical charts: {'YES' if viz_coverage.get('has_categorical_viz') else 'NO'}")
+            lines.append(f"  Columns visualized: {viz_coverage.get('visualized_columns', [])}")
+            if viz_coverage.get("gaps"):
+                lines.append("  ⚠️ COVERAGE GAPS (consider using IMPROVE:visualization):")
+                for gap in viz_coverage["gaps"]:
+                    lines.append(f"    - {gap}")
+
+        # Include quality issues found
+        if self.state.get("quality_issues"):
+            lines.append("\nQUALITY ISSUES FOUND:")
+            for agent, issues in self.state["quality_issues"].items():
+                lines.append(f"  {agent}: {issues}")
+
+        # Include fuller task summaries (500 chars instead of 200)
         if self.state["task_summaries"]:
-            lines.append("TASK SUMMARIES:")
+            lines.append("\nTASK SUMMARIES:")
             for name, summary in self.state["task_summaries"].items():
-                lines.append(f"  {name}: {summary[:200]}")
+                lines.append(f"  {name}: {summary[:500]}")
+
         if self.state["errors"]:
-            lines.append(f"RECENT ERRORS: {self.state['errors'][-3:]}")
+            lines.append(f"\nRECENT ERRORS: {self.state['errors'][-3:]}")
+
         return "\n".join(lines)
 
     def _ask_manager(self, snapshot: str) -> str:
         task_description = (
-            f"Based on the current analysis state below, decide the next action.\n\n"
-            f"{snapshot}\n\n"
-            f"Respond with exactly one line: DELEGATE:specialist_name | instructions\n"
-            f"or: COMPLETE"
+            f"CURRENT STATE:\n{snapshot}\n\n"
+            f"RULES:\n"
+            f"- NEVER delegate to an agent already in COMPLETED TASKS\n"
+            f"- Progress forward: eda → visualization → statistics → report → COMPLETE\n"
+            f"- Output ONLY one line, no explanation\n\n"
+            f"YOUR RESPONSE (one line only):"
         )
         task = Task(
             description=task_description,
-            expected_output="One line: DELEGATE:name | instructions OR COMPLETE",
+            expected_output="DELEGATE:agent_name | instructions  OR  COMPLETE",
             agent=self.manager,
         )
         crew = Crew(
@@ -346,24 +557,34 @@ class AnalysisOrchestrator:
         return str(result).strip()
 
     def _parse_decision(self, decision: str) -> dict:
-        # Extract just the last DELEGATE or COMPLETE line from potentially verbose output
+        # Extract just the last DELEGATE, IMPROVE, or COMPLETE line from potentially verbose output
         for line in reversed(decision.strip().splitlines()):
             line = line.strip()
             if line.upper() == "COMPLETE":
                 return {"action": "COMPLETE"}
+
+            # Check for IMPROVE: action (re-delegate with improvements)
+            improve_match = re.search(r"IMPROVE:\s*(\w+)\s*\|\s*(.+)", line, re.IGNORECASE)
+            if improve_match:
+                specialist = improve_match.group(1).strip().lower()
+                instructions = improve_match.group(2).strip()
+                if specialist in self.VALID_SPECIALISTS:
+                    return {"action": "DELEGATE", "specialist": specialist, "instructions": instructions, "is_improvement": True}
+
+            # Check for regular DELEGATE: action
             match = re.search(r"DELEGATE:\s*(\w+)\s*\|\s*(.+)", line, re.IGNORECASE)
             if match:
                 specialist = match.group(1).strip().lower()
                 instructions = match.group(2).strip()
                 if specialist in self.VALID_SPECIALISTS:
-                    return {"action": "DELEGATE", "specialist": specialist, "instructions": instructions}
+                    return {"action": "DELEGATE", "specialist": specialist, "instructions": instructions, "is_improvement": False}
 
         if "COMPLETE" in decision.upper():
             return {"action": "COMPLETE"}
 
         for name in self.VALID_SPECIALISTS:
             if name in decision.lower():
-                return {"action": "DELEGATE", "specialist": name, "instructions": decision}
+                return {"action": "DELEGATE", "specialist": name, "instructions": decision, "is_improvement": False}
 
         return {"action": "COMPLETE"}
 
@@ -578,28 +799,38 @@ class AnalysisOrchestrator:
 
     def _save_report(self):
         report_text = self._get_report_text()
-        if not report_text:
-            return
 
         output_dir = Path(self.tool._output_dir).parent
         report_dir = output_dir / "reports"
         report_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = report_dir / f"report_{timestamp}.md"
-        report_path.write_text(report_text, encoding="utf-8")
-        self.state["report_path"] = str(report_path)
+
+        # Save report markdown (if available)
+        if report_text:
+            report_path = report_dir / f"report_{timestamp}.md"
+            report_path.write_text(report_text, encoding="utf-8")
+            self.state["report_path"] = str(report_path)
+
+        # Always save the notebook (captures all cell execution history)
+        try:
+            notebook_path = report_dir / f"notebook_{timestamp}.ipynb"
+            self.tool.export_notebook(str(notebook_path))
+            self.state["notebook_path"] = str(notebook_path)
+        except Exception as e:
+            self.state["errors"].append(f"Notebook export failed: {str(e)}")
 
     def save_results_bundle(self, target_base: str) -> dict:
         """
-        Save report + all chart images into a timestamped subdirectory
+        Save report + notebook + all chart images into a timestamped subdirectory
         under target_base (e.g. analysis_results/).
         Structure:
           analysis_results/run_<timestamp>/
             charts/
               chart_xxx.png
             analysis_report_<timestamp>.md
-        Returns {"run_dir": str, "report_path": str, "charts_copied": int}.
+            analysis_notebook_<timestamp>.ipynb
+        Returns {"run_dir": str, "report_path": str, "notebook_path": str, "charts_copied": int}.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = Path(target_base) / f"run_{timestamp}"
@@ -616,6 +847,16 @@ class AnalysisOrchestrator:
             report_path = run_dir / f"analysis_report_{timestamp}.md"
             report_path.write_text(report_text, encoding="utf-8")
 
+        # Save notebook (export all cells with outputs)
+        notebook_path = None
+        try:
+            notebook_path = run_dir / f"analysis_notebook_{timestamp}.ipynb"
+            self.tool.export_notebook(str(notebook_path))
+        except Exception as e:
+            # Don't fail the whole bundle if notebook export fails
+            self.state["errors"].append(f"Notebook export failed: {str(e)}")
+            notebook_path = None
+
         # Copy charts to charts subdirectory
         charts_copied = 0
         for chart_path_str in self.state.get("charts", []):
@@ -628,6 +869,7 @@ class AnalysisOrchestrator:
         return {
             "run_dir": str(run_dir),
             "report_path": str(report_path) if report_path else None,
+            "notebook_path": str(notebook_path) if notebook_path else None,
             "charts_copied": charts_copied,
         }
 
@@ -652,8 +894,178 @@ class AnalysisOrchestrator:
                     return True
         return False
 
+    def _extract_chart_descriptions(self, cells: list) -> list[str]:
+        """Extract descriptions of what charts were created from cell code."""
+        descriptions = []
+        chart_keywords = {
+            "scatter": "scatter plot",
+            "hist": "histogram",
+            "bar": "bar chart",
+            "box": "box plot",
+            "heatmap": "heatmap",
+            "corr": "correlation",
+            "pie": "pie chart",
+            "line": "line plot",
+            "kde": "density plot",
+            "violin": "violin plot",
+            "pairplot": "pair plot",
+            "countplot": "count plot",
+            "regplot": "regression plot",
+        }
+
+        for cell in cells:
+            code = cell.get("code", "").lower()
+            images = cell.get("images", [])
+
+            if images:
+                # Try to extract what was plotted
+                desc_parts = []
+
+                # Check chart type
+                chart_type = "chart"
+                for keyword, name in chart_keywords.items():
+                    if keyword in code:
+                        chart_type = name
+                        break
+
+                # Try to extract column names from code
+                # Look for patterns like df['column'], df.column, x='column', y='column'
+                col_pattern = r"(?:df(?:_\w+)?)\[[\'\"](\w+)[\'\"]\]|(?:x|y|hue|data)=[\'\"](\w+)[\'\"]"
+                matches = re.findall(col_pattern, code)
+                cols = [m[0] or m[1] for m in matches if m[0] or m[1]]
+
+                if cols:
+                    desc_parts.append(f"{chart_type} of {', '.join(cols[:3])}")
+                else:
+                    desc_parts.append(chart_type)
+
+                for img in images:
+                    img_name = Path(img).name
+                    descriptions.append(f"{desc_parts[0]} ({img_name})")
+
+        return descriptions
+
+    def _check_visualization_coverage(self, cells: list) -> dict:
+        """
+        Check if visualizations cover key data characteristics.
+        Returns dict with coverage status and gaps.
+        """
+        profile = self.state.get("profile", {})
+
+        # What the data has
+        top_correlations = profile.get("top_correlations", [])
+        highly_skewed = profile.get("highly_skewed_columns", [])
+        binary_cols = profile.get("binary_columns", [])
+        class_balance = profile.get("class_balance", {})
+        imbalanced_cols = [col for col, info in class_balance.items() if info.get("is_imbalanced")]
+
+        # Track what was visualized
+        visualized_cols = set()
+        has_correlation_viz = False
+        has_distribution_viz = False
+        has_categorical_viz = False
+
+        chart_keywords_correlation = ["heatmap", "corr", "scatter", "regplot", "pairplot"]
+        chart_keywords_distribution = ["hist", "box", "violin", "kde", "distplot"]
+        chart_keywords_categorical = ["countplot", "bar", "pie"]
+
+        for cell in cells:
+            code = cell.get("code", "").lower()
+            images = cell.get("images", [])
+
+            if not images:
+                continue
+
+            # Check chart types
+            for kw in chart_keywords_correlation:
+                if kw in code:
+                    has_correlation_viz = True
+                    break
+            for kw in chart_keywords_distribution:
+                if kw in code:
+                    has_distribution_viz = True
+                    break
+            for kw in chart_keywords_categorical:
+                if kw in code:
+                    has_categorical_viz = True
+                    break
+
+            # Extract visualized columns
+            col_pattern = r"(?:df(?:_\w+)?)\[[\'\"](\w+)[\'\"]\]|(?:x|y|hue|data)=[\'\"](\w+)[\'\"]"
+            matches = re.findall(col_pattern, code)
+            for m in matches:
+                col = m[0] or m[1]
+                if col:
+                    visualized_cols.add(col)
+
+        # Determine gaps
+        gaps = []
+
+        # Check correlation coverage
+        if top_correlations and not has_correlation_viz:
+            corr_cols = set()
+            for c1, c2, _ in top_correlations[:3]:
+                corr_cols.add(c1)
+                corr_cols.add(c2)
+            gaps.append(f"Missing correlation visualization for highly correlated columns: {list(corr_cols)[:4]}")
+
+        # Check skewness coverage
+        if highly_skewed:
+            skewed_not_viz = [c for c in highly_skewed[:5] if c not in visualized_cols]
+            if skewed_not_viz and not has_distribution_viz:
+                gaps.append(f"Missing distribution plots for skewed columns: {skewed_not_viz}")
+
+        # Check binary/imbalanced coverage
+        if imbalanced_cols:
+            imbalanced_not_viz = [c for c in imbalanced_cols if c not in visualized_cols]
+            if imbalanced_not_viz and not has_categorical_viz:
+                gaps.append(f"Missing count/bar plots for imbalanced columns: {imbalanced_not_viz}")
+
+        coverage = {
+            "has_correlation_viz": has_correlation_viz,
+            "has_distribution_viz": has_distribution_viz,
+            "has_categorical_viz": has_categorical_viz,
+            "visualized_columns": list(visualized_cols),
+            "gaps": gaps,
+            "is_sufficient": len(gaps) == 0,
+        }
+
+        return coverage
+
+    def _evaluate_output_quality(self, specialist_name: str, cells: list) -> tuple[bool, list[str]]:
+        """
+        Basic quality check - did the agent produce meaningful output?
+        The MANAGER will evaluate if it matches the requested analysis.
+        Returns (passed, issues_list).
+        """
+        issues = []
+
+        # Check: At least some output was produced
+        all_output = " ".join(cell.get("stdout", "") for cell in cells)
+        chart_count = sum(len(cell.get("images", [])) for cell in cells)
+
+        if specialist_name == "visualization":
+            if chart_count == 0:
+                issues.append("No charts were generated")
+                return False, issues
+            # Record chart count for manager to see
+            self.state["quality_issues"][specialist_name] = [f"Created {chart_count} chart(s)"]
+
+        elif specialist_name == "eda":
+            if len(all_output) < 100:
+                issues.append("EDA output too brief")
+                return False, issues
+
+        # Manager will evaluate if the actual content matches expectations
+        return True, issues
+
     def _evaluate_quality(self, specialist_name: str, result: str, cells_before: int = 0) -> bool:
+        """
+        Evaluate quality of specialist output.
+        Checks both technical correctness (no errors) and semantic meaningfulness.
+        """
         if not result:
+            self.state["quality_issues"][specialist_name] = ["No output produced"]
             return False
 
         all_cells = self.tool.get_cells()
@@ -662,22 +1074,56 @@ class AnalysisOrchestrator:
             if c.get("agent") == specialist_name
         ]
 
+        # Check 1: No runtime errors
         for cell in specialist_cells:
             stderr = cell.get("stderr", "")
             if self._is_real_error(stderr):
+                self.state["quality_issues"][specialist_name] = [f"Runtime error: {stderr[:200]}"]
                 return False
 
+        # Check 2: Output is not trivially short
         if len(result.strip()) <= 20:
+            self.state["quality_issues"][specialist_name] = ["Output too short/trivial"]
             return False
 
+        # Check 3: Kernel state is valid (except for report agent)
         if specialist_name != "report":
             try:
                 check_result = self.tool._run(KERNEL_CHECK_CODE, agent_name="validation")
                 check_data = json.loads(check_result)
                 if "DataFrame" not in check_data.get("stdout", ""):
+                    self.state["quality_issues"][specialist_name] = ["DataFrame not found in kernel"]
                     return False
             except Exception:
+                self.state["quality_issues"][specialist_name] = ["Kernel state validation failed"]
                 return False
+
+        # Check 4: Basic output quality (Manager will do semantic evaluation)
+        if specialist_name in ["visualization", "eda"]:
+            # Extract chart descriptions for manager context
+            if specialist_name == "visualization":
+                chart_descs = self._extract_chart_descriptions(specialist_cells)
+                self.state["chart_descriptions"] = chart_descs
+
+                # Check visualization coverage
+                coverage = self._check_visualization_coverage(specialist_cells)
+                self.state["visualization_coverage"] = coverage
+
+                # Store gaps for Manager to see
+                if coverage["gaps"]:
+                    self.state["quality_issues"][specialist_name] = coverage["gaps"]
+
+            # Basic quality check - did they produce output?
+            passed, issues = self._evaluate_output_quality(specialist_name, specialist_cells)
+            if not passed:
+                self.state["quality_issues"][specialist_name] = issues
+                return False  # Hard fail if no output at all
+
+        # Clear any previous quality issues if we passed (unless there are coverage gaps)
+        if specialist_name in self.state["quality_issues"]:
+            # Don't clear visualization coverage gaps - Manager needs to see them
+            if specialist_name != "visualization" or not self.state.get("visualization_coverage", {}).get("gaps"):
+                del self.state["quality_issues"][specialist_name]
 
         return True
 
@@ -686,20 +1132,34 @@ class AnalysisOrchestrator:
     # -----------------------------------------------------------------------
 
     async def _emit(self, event_type: str, content):
+        self._event_count += 1
+        event = {
+            "type": event_type,
+            "content": content,
+            "timestamp": datetime.now().isoformat(),
+        }
+
         if self.ws:
-            await self.ws.broadcast({
-                "type": event_type,
-                "content": content,
-                "timestamp": datetime.now().isoformat(),
-            })
+            logger.info(f"[Emit #{self._event_count}] {event_type}: {str(content)[:100]}...")
+            await self.ws.broadcast(event)
+        else:
+            logger.warning(f"[Emit #{self._event_count}] No WebSocket manager - {event_type} event lost")
 
     async def _emit_new_cells(self):
         """Emit cell_update events for any new or changed cells since last check."""
-        all_cells = self.tool.get_cells()
-        if len(all_cells) > self._known_cell_count:
-            for cell in all_cells[self._known_cell_count:]:
-                await self._emit("cell_update", cell)
-        else:
-            for cell in all_cells:
-                await self._emit("cell_update", cell)
-        self._known_cell_count = len(all_cells)
+        with self._cell_lock:
+            all_cells = self.tool.get_cells()
+            current_count = len(all_cells)
+
+            if current_count > self._known_cell_count:
+                new_cells = all_cells[self._known_cell_count:]
+                logger.info(f"[Cells] Emitting {len(new_cells)} new cells (total: {current_count})")
+                for cell in new_cells:
+                    agent = cell.get("agent", "unknown")
+                    cell_id = cell.get("cell_id", "unknown")
+                    logger.debug(f"[Cells] Emitting cell {cell_id} from {agent}")
+                    await self._emit("cell_update", cell)
+            else:
+                logger.debug(f"[Cells] No new cells to emit (known: {self._known_cell_count}, current: {current_count})")
+
+            self._known_cell_count = current_count

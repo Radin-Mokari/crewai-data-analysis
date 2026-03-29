@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
       { source: '/kernel/:path*', destination: 'http://localhost:8000/kernel/:path*' },
       { source: '/files/:path*', destination: 'http://localhost:8000/files/:path*' },
       { source: '/save-results', destination: 'http://localhost:8000/save-results' },
+      { source: '/debug/:path*', destination: 'http://localhost:8000/debug/:path*' },
       { source: '/api/:path*', destination: 'http://localhost:8000/:path*' }
     ];
   }

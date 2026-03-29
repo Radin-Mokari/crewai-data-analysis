@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,13 @@ from backend.database import SessionDB
 from backend.tools import JupyterSessionTool
 from backend.agents import create_specialists, create_manager
 from backend.config import make_gemini_llm
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("main")
 
 app = FastAPI(title="AI Data Analyst")
 app.add_middleware(
@@ -94,9 +102,16 @@ async def start_analysis(dataset_path: str, prompt: str, background_tasks: Backg
 
 
 async def run_analysis(session_id, dataset_path, prompt):
+    logger.info(f"[Analysis] Starting session {session_id} for {dataset_path}")
+    logger.info(f"[Analysis] WebSocket connected: {ws_manager.is_connected}")
+
     orchestrator = _make_orchestrator()
     try:
         result = await orchestrator.run(dataset_path, prompt)
+        logger.info(f"[Analysis] Session {session_id} completed successfully")
+        logger.info(f"[Analysis] Completed agents: {result.get('completed', [])}")
+        logger.info(f"[Analysis] Charts created: {len(result.get('charts', []))}")
+
         db.save_result(session_id, result)
 
         # Automatically save results to analysis_results/run_<timestamp>/
@@ -110,7 +125,9 @@ async def run_analysis(session_id, dataset_path, prompt):
         with _orch_lock:
             _last_completed[session_id] = orchestrator
         await ws_manager.broadcast({"type": "done", "content": session_id, "timestamp": ""})
+        logger.info(f"[Analysis] Session {session_id} done event broadcast")
     except Exception as e:
+        logger.error(f"[Analysis] Session {session_id} failed: {e}", exc_info=True)
         db.save_error(session_id, str(e))
         await ws_manager.broadcast({"type": "done", "content": f"error:{session_id}", "timestamp": ""})
 
@@ -137,9 +154,13 @@ async def run_single_agent(
 
 
 async def run_single_agent_task(session_id, dataset_path, agent_name, prompt):
+    logger.info(f"[SingleAgent] Starting {agent_name} for session {session_id}")
+    logger.info(f"[SingleAgent] WebSocket connected: {ws_manager.is_connected}")
+
     orchestrator = _get_or_create_orchestrator(dataset_path)
     try:
         result = await orchestrator.run_single_specialist(dataset_path, agent_name, prompt)
+        logger.info(f"[SingleAgent] {agent_name} completed for session {session_id}")
         db.save_result(session_id, result)
 
         # When report agent completes, save results to analysis_results/
@@ -154,7 +175,9 @@ async def run_single_agent_task(session_id, dataset_path, agent_name, prompt):
         with _orch_lock:
             _last_completed[session_id] = orchestrator
         await ws_manager.broadcast({"type": "done", "content": session_id, "timestamp": ""})
+        logger.info(f"[SingleAgent] Session {session_id} done event broadcast")
     except Exception as e:
+        logger.error(f"[SingleAgent] {agent_name} failed for session {session_id}: {e}", exc_info=True)
         db.save_error(session_id, str(e))
         await ws_manager.broadcast({"type": "done", "content": f"error:{session_id}", "timestamp": ""})
 
@@ -323,6 +346,119 @@ async def kernel_export():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+# ---------------------------------------------------------------------------
+# Kernel State & Introspection Endpoints (Colab-parity)
+# ---------------------------------------------------------------------------
+
+@app.get("/kernel/state")
+async def kernel_get_state():
+    """
+    Get comprehensive kernel state snapshot including:
+    - All variables with types, shapes, and values
+    - Memory usage
+    - Kernel uptime and health
+    """
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+    return tool.get_kernel_state()
+
+
+@app.get("/kernel/dataframes")
+async def kernel_get_dataframes():
+    """
+    Get detailed info about all DataFrames in the kernel:
+    - Shape, columns, dtypes
+    - Memory usage
+    - First 3 rows preview
+    """
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+    return tool.get_dataframes_info()
+
+
+@app.get("/kernel/stats")
+async def kernel_get_stats():
+    """Get kernel statistics for debugging."""
+    tool = _find_active_tool()
+    if not tool:
+        return {"is_alive": False, "message": "No active kernel"}
+    return tool.get_stats()
+
+
+@app.post("/kernel/interrupt")
+async def kernel_interrupt():
+    """Interrupt a long-running computation in the kernel."""
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+    success = tool.interrupt_kernel()
+    return {"status": "interrupted" if success else "failed", "success": success}
+
+
+@app.post("/kernel/restart")
+async def kernel_restart():
+    """
+    Restart the kernel, clearing the namespace but preserving cell history.
+    Useful when the kernel gets into a bad state.
+    """
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+    success = tool.restart_kernel()
+    await ws_manager.broadcast({
+        "type": "progress",
+        "content": "Kernel restarted" if success else "Kernel restart failed",
+        "timestamp": datetime.now().isoformat(),
+    })
+    return {"status": "restarted" if success else "failed", "success": success}
+
+
+@app.get("/kernel/heartbeat")
+async def kernel_heartbeat():
+    """Check if the kernel is responsive (heartbeat check)."""
+    tool = _find_active_tool()
+    if not tool:
+        return {"alive": False, "message": "No active kernel"}
+    alive = tool.check_heartbeat()
+    return {"alive": alive, "stats": tool.get_stats()}
+
+
+@app.post("/kernel/run-all")
+async def kernel_run_all_cells():
+    """Re-execute all cells in order."""
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+
+    results = tool.run_all_cells()
+
+    # Broadcast each cell update
+    for cell in results:
+        await ws_manager.broadcast({
+            "type": "cell_update",
+            "content": cell,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    return {
+        "status": "completed",
+        "cells_executed": len(results),
+        "all_successful": all(c.get("success", False) for c in results),
+    }
+
+
+@app.post("/kernel/clear-cells")
+async def kernel_clear_cells():
+    """Clear all cell records (does not affect kernel namespace)."""
+    tool = _find_active_tool()
+    if not tool:
+        return JSONResponse(status_code=400, content={"error": "No active kernel."})
+    tool.clear_cells()
+    return {"status": "cleared"}
+
+
 @app.get("/sessions")
 async def list_sessions():
     return db.get_sessions()
@@ -353,3 +489,51 @@ async def cleanup_kernels():
             except Exception:
                 pass
         _active_orchestrators.clear()
+
+
+# ---------------------------------------------------------------------------
+# Debug endpoints for troubleshooting WebSocket and analysis issues
+# ---------------------------------------------------------------------------
+
+@app.get("/debug/ws")
+async def debug_websocket():
+    """Get WebSocket connection status and statistics."""
+    return {
+        "ws_stats": ws_manager.get_stats(),
+        "active_orchestrators": len(_active_orchestrators),
+        "completed_sessions": len(_last_completed),
+    }
+
+
+@app.get("/debug/state")
+async def debug_state():
+    """Get current state of all active orchestrators."""
+    states = {}
+    with _orch_lock:
+        for dataset_path, orch in _active_orchestrators.items():
+            states[dataset_path] = {
+                "kernel_alive": orch.tool._km is not None and orch.tool._km.is_alive() if orch.tool._km else False,
+                "cells_count": len(orch.tool.get_cells()),
+                "completed_agents": orch.state.get("completed", []),
+                "charts_count": len(orch.state.get("charts", [])),
+            }
+    return {
+        "active_orchestrators": states,
+        "ws_connected": ws_manager.is_connected,
+    }
+
+
+@app.post("/debug/test-ws")
+async def debug_test_websocket():
+    """Send a test event to verify WebSocket connectivity."""
+    test_event = {
+        "type": "progress",
+        "content": f"[TEST] WebSocket test message at {datetime.now().isoformat()}",
+        "timestamp": datetime.now().isoformat(),
+    }
+    await ws_manager.broadcast(test_event)
+    return {
+        "status": "sent",
+        "ws_connected": ws_manager.is_connected,
+        "event": test_event,
+    }

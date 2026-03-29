@@ -1,18 +1,40 @@
 # AI Data Analyst — Multi-Agent Analysis Platform
 
-A dynamic hierarchical multi-agent system for automated data analysis, powered by CrewAI, Google Gemini, and a persistent Jupyter execution kernel.
+A dynamic hierarchical multi-agent system for automated data analysis, powered by CrewAI, Google Gemini 2.5 Flash, and a persistent Jupyter execution kernel.
 
 ## Architecture
 
-- **Manager Agent**: Custom ReAct loop that dynamically decides which specialists to run.
-- **7 Specialist Agents**: Cleaning, EDA, Visualization, Statistics, Feature Engineering, Class Imbalance, Report.
-- **Jupyter Kernel (shared session)**: A persistent IPython kernel per analysis session.
-  - Code execution is handled via `nbclient`/`nbformat` (with tracked outputs), while the kernel lifecycle uses `jupyter_client.KernelManager`.
-  - Variables persist across cells within the same kernel session.
-- **Two Execution Paths**:
-  - **Path A**: `POST /analyze` (manager-driven full analysis)
-  - **Path B**: `POST /agent/run` (run a single specialist)
-- **Quality Gate + Context Injection**: Specialists receive the required prior findings + kernel state.
+### Core Components
+
+- **Manager Agent**: Custom ReAct loop that dynamically decides which specialists to run, evaluates their outputs, and can request improvements.
+- **7 Specialist Agents**:
+  - `cleaning` — Handle missing values, duplicates, outliers, type fixes
+  - `eda` — Explore distributions, correlations, patterns
+  - `visualization` — Create 3-5 insightful charts
+  - `statistics` — Run hypothesis tests, normality checks, correlation significance
+  - `feature_engineering` — Create polynomial/interaction features, encode categoricals, scale
+  - `class_imbalance` — Detect and fix class imbalance via SMOTE/undersampling
+  - `report` — Synthesize findings into markdown report (no code execution)
+- **Jupyter Kernel (shared session)**: A persistent IPython kernel per analysis session via `jupyter_client.KernelManager`. Variables persist across cells within the same kernel session.
+
+### Execution Paths
+
+- **Path A** (`POST /analyze`): Manager-driven full analysis with ReAct loop
+  - OBSERVE → THINK → DECIDE → DELEGATE → CAPTURE → EVALUATE cycle
+  - Manager can use `DELEGATE`, `IMPROVE`, or `COMPLETE` actions
+  - Max 10 iterations, max 2 redos per agent, 5 total redos
+  - Enforces report completion before allowing COMPLETE
+- **Path B** (`POST /agent/run`): Run a single specialist directly
+  - Reuses kernel and state if already initialized
+  - One automatic retry on failure
+
+### Key Features
+
+- **Context Injection**: Specialists receive prior findings + kernel state to prevent hallucination
+- **Quality Gate**: Evaluates each specialist's output for errors, meaningful content, valid kernel state
+- **Visualization Coverage Check**: Verifies charts cover correlations, distributions, and class imbalance
+- **IMPROVE Action**: Manager can request additional work from specialists (max 2 improvements per agent)
+- **Smart Skip Criteria**: Auto-skip cleaning if data is clean, skip class_imbalance if balanced
 
 ## Project Structure
 
@@ -22,33 +44,35 @@ crewai-data-analysis-1/
 ├── .env.example                # Template for .env
 ├── analyst-agent/
 │   ├── backend/
-│   │   ├── main.py             # FastAPI app: analysis, sessions, WS, and kernel CRUD (/kernel/*)
+│   │   ├── main.py             # FastAPI app: analysis, sessions, WS, kernel CRUD
 │   │   ├── config.py           # .env loading, Gemini LLM factory
-│   │   ├── orchestrator.py     # Path A + Path B orchestration
-│   │   ├── agents.py           # 7 specialists + manager agent
-│   │   ├── prompts.py          # All system prompts
-│   │   ├── tools.py            # JupyterSessionTool (nbclient/nbformat + cell CRUD)
-│   │   ├── websocket_manager.py
+│   │   ├── orchestrator.py     # Path A + Path B orchestration, quality gate
+│   │   ├── agents.py           # 7 specialists + manager agent factory
+│   │   ├── prompts.py          # All system prompts (CORE_MODE, specialist, manager)
+│   │   ├── tools.py            # JupyterSessionTool (jupyter_client + cell tracking)
+│   │   ├── websocket_manager.py # WebSocket broadcaster
 │   │   ├── database.py         # SQLite session persistence
 │   │   └── requirements.txt
-│   └── frontend/
+│   └── frontend/               # Next.js 16 + React 19 + Tailwind CSS
 │       ├── src/
-│       │   ├── App.jsx
+│       │   ├── app/
+│       │   │   ├── layout.tsx
+│       │   │   ├── page.tsx    # Main 3-panel layout
+│       │   │   └── globals.css
 │       │   ├── components/
-│       │   │   ├── SessionSidebar.jsx
-│       │   │   ├── ChatSection.jsx         # includes the prompt island UI + agent chips
-│       │   │   ├── KernelView.jsx          # renders kernel cells + output
-│       │   │   └── ProcessLogs.jsx          # renders process logs drawer/panel
+│       │   │   ├── SessionSidebar.jsx   # Session history browser
+│       │   │   ├── ChatSection.jsx      # Prompt input, agent chips, report display
+│       │   │   ├── KernelView.jsx       # Notebook-style cell rendering
+│       │   │   ├── ProcessLogs.jsx      # Real-time agent thoughts & quality events
+│       │   │   └── HydrationFix.tsx
 │       │   ├── hooks/
-│       │   │   └── useWebSocket.js
+│       │   │   └── useWebSocket.ts      # WebSocket with reconnection
 │       │   └── stores/
-│       │       └── sessionStore.js (Zustand)
-│       ├── package.json
-│       └── vite.config.js
-├── California_Housing_Prices.csv
-├── The Titanic dataset.csv
-├── flight.csv
-└── analysis_results/          # Output reports and charts
+│       │       └── sessionStore.ts      # Zustand state management
+│       ├── next.config.ts
+│       └── package.json
+├── analysis_results/           # Output reports, notebooks, and charts
+└── *.csv                       # Test datasets
 ```
 
 ## Setup
@@ -59,7 +83,7 @@ crewai-data-analysis-1/
 - Node.js 18+
 - A Google Gemini API key ([get one here](https://aistudio.google.com/app/apikey))
 
-### 1. Environment variables
+### 1. Environment Variables
 
 ```bash
 cp .env.example .env
@@ -100,7 +124,7 @@ cd analyst-agent/frontend
 npm run dev
 ```
 
-Open **http://localhost:5173** in your browser.
+Open **http://localhost:3000** in your browser.
 
 ### CLI Testing (no frontend needed)
 
@@ -121,7 +145,7 @@ Three CSV datasets are available in the project root for testing:
 
 ## API Endpoints
 
-### Analysis / sessions
+### Analysis & Sessions
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -130,10 +154,10 @@ Three CSV datasets are available in the project root for testing:
 | POST | `/agent/run` | Run a single specialist (Path B) |
 | GET | `/sessions` | List past sessions |
 | GET | `/sessions/{id}` | Get session details with results |
+| POST | `/save-results` | Bundle report markdown + charts into timestamped folder |
 | WS | `/ws` | WebSocket for real-time streaming updates |
-| POST | `/save-results` | Bundle report markdown + charts |
 
-### Kernel cell CRUD (backend capability)
+### Kernel Cell CRUD
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -148,10 +172,81 @@ Three CSV datasets are available in the project root for testing:
 
 ## Frontend Layout
 
-The current UI is a 3-column layout:
+The UI is a 3-column dark-themed layout:
 
-- **Left**: `SessionSidebar` (session list + “New session”)
-- **Middle**: `ChatSection`
-  - prompt island UI (agent chips + tools + prompt input)
-  - streamed “thought” output + final report markdown
-- **Right**: `KernelView` (cell rendering) + `ProcessLogs`
+```
+┌────────────┬──────────────────────────────────────────────┐
+│            │              Chat Section                    │
+│  Session   │  (upload, prompt, agent chips,              │
+│  Sidebar   │   progress, final report)                   │
+│            ├──────────────────┬───────────────────────────┤
+│            │  Kernel View     │   Process Logs            │
+│            │  (notebook-style │   (agent thoughts,        │
+│            │   cells: code,   │    quality events)        │
+│            │   output, images)│                           │
+└────────────┴──────────────────┴───────────────────────────┘
+```
+
+### WebSocket Events
+
+| Event Type | Destination | Content |
+|------------|-------------|---------|
+| `agent_thought` | ProcessLogs | Manager/agent reasoning |
+| `quality_event` | ProcessLogs | PASS/FAIL/FORCE-PASS status |
+| `cell_update` | KernelView | New cell with code, stdout, stderr, images |
+| `progress` | ChatSection | Current operation status |
+| `done` | ChatSection | Analysis complete signal |
+| `results_saved` | ChatSection | Path to saved results bundle |
+
+## Manager Decision Flow
+
+```
+1. OBSERVE: Build snapshot (dataset profile, completed tasks, summaries)
+2. THINK: Analyze what needs to be done
+3. DECIDE: Output one of:
+   - DELEGATE:agent_name | specific instructions
+   - IMPROVE:agent_name | what's missing and improvements needed
+   - COMPLETE (only after report is done)
+4. EXECUTE: Run the specialist with context injection
+5. EVALUATE: Quality gate checks output
+6. Loop back to OBSERVE
+```
+
+### Skip Criteria
+
+- `cleaning`: Skip if no missing values and duplicates < 1%
+- `class_imbalance`: Skip if all potential targets are balanced (<70/30)
+- `feature_engineering`: Skip unless user requests modeling
+- `statistics`: Optional, can skip for quick analysis
+
+## Output Structure
+
+After each analysis, results are saved to:
+
+```
+analysis_results/run_<timestamp>/
+├── charts/
+│   ├── visualization_1_abc123.png
+│   ├── visualization_2_def456.png
+│   └── ...
+├── analysis_report_<timestamp>.md
+└── analysis_notebook_<timestamp>.ipynb
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| LLM | Google Gemini 2.5 Flash |
+| Agent Framework | CrewAI |
+| Code Execution | jupyter_client (KernelManager) |
+| Backend | FastAPI, Python 3.10+ |
+| Frontend | Next.js 16, React 19, Tailwind CSS 4 |
+| State Management | Zustand |
+| Syntax Highlighting | Prism.js |
+| Markdown Rendering | react-markdown |
+| Database | SQLite |
+
+## License
+
+MIT

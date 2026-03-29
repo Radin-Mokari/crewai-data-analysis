@@ -1,5 +1,5 @@
 "use client";
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 
 function groupByDate(sessions) {
@@ -21,6 +21,11 @@ export default function SessionSidebar() {
   const activeSession = useSessionStore((s) => s.activeSession);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const clearCurrent = useSessionStore((s) => s.clearCurrent);
+  const connected = useSessionStore((s) => s.connected);
+  const cells = useSessionStore((s) => s.cells);
+  const logs = useSessionStore((s) => s.logs);
+
+  const [debugInfo, setDebugInfo] = useState(null);
 
   useEffect(() => {
     fetch('/sessions')
@@ -28,6 +33,30 @@ export default function SessionSidebar() {
       .then((data) => Array.isArray(data) ? setSessions(data) : null)
       .catch(() => {});
   }, []);
+
+  const testWebSocket = async () => {
+    try {
+      const res = await fetch('/debug/test-ws', { method: 'POST' });
+      const data = await res.json();
+      setDebugInfo(data);
+      console.log('[Debug] Test WS response:', data);
+    } catch (e) {
+      console.error('[Debug] Test WS failed:', e);
+      setDebugInfo({ error: String(e) });
+    }
+  };
+
+  const fetchDebugState = async () => {
+    try {
+      const res = await fetch('/debug/ws');
+      const data = await res.json();
+      setDebugInfo(data);
+      console.log('[Debug] WS state:', data);
+    } catch (e) {
+      console.error('[Debug] Fetch state failed:', e);
+      setDebugInfo({ error: String(e) });
+    }
+  };
 
   const loadSession = async (id) => {
     const res = await fetch(`/sessions/${id}`);
@@ -119,23 +148,66 @@ export default function SessionSidebar() {
         )}
       </div>
 
-      {/* User Profile Footer */}
-      <div style={{ padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 'bold', background: '#d946ef', color: '#fff' }}>
-            JD
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'col' }}>
-            <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', display: 'block' }}>John Doe</span>
-            <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block' }}>Pro Plan</span>
-          </div>
+      {/* Debug Panel */}
+      <div style={{ padding: '12px', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+          <div style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: connected ? 'var(--accent-green)' : 'var(--accent-red)'
+          }} />
+          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+            WS: {connected ? 'Connected' : 'Disconnected'}
+          </span>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+            {cells.length} cells | {logs.length} logs
+          </span>
         </div>
-        <button style={{ padding: '6px', borderRadius: '6px', color: 'var(--text-muted)' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-        </button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            onClick={testWebSocket}
+            style={{
+              flex: 1,
+              padding: '6px',
+              fontSize: '10px',
+              borderRadius: '4px',
+              background: 'var(--surface-hover)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-light)'
+            }}
+          >
+            Test WS
+          </button>
+          <button
+            onClick={fetchDebugState}
+            style={{
+              flex: 1,
+              padding: '6px',
+              fontSize: '10px',
+              borderRadius: '4px',
+              background: 'var(--surface-hover)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-light)'
+            }}
+          >
+            Debug Info
+          </button>
+        </div>
+        {debugInfo && (
+          <pre style={{
+            marginTop: '8px',
+            fontSize: '9px',
+            color: 'var(--text-muted)',
+            overflow: 'auto',
+            maxHeight: '80px',
+            background: 'var(--bg-chat)',
+            padding: '6px',
+            borderRadius: '4px'
+          }}>
+            {JSON.stringify(debugInfo, null, 2)}
+          </pre>
+        )}
       </div>
     </div>
   );
