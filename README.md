@@ -1,20 +1,27 @@
 # CrewAI Data Analysis Pipeline
 
-A multi-agent sequential pipeline for automated data analysis using CrewAI and Google Gemini.
+A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic supervisor mode** (JSON routing over a shared Python kernel) or **sequential** legacy pipeline.
 
 ## Features
 
-- **Multi-Agent Architecture**: 10 specialized agents for each analysis phase
-- **Sequential Pipeline**: Data loading → Inspection → Cleaning → Transformation → EDA → Visualization → Statistical Analysis → Report Generation
-- **Core Mode Prompting**: Agents use dynamic column detection (no hardcoded column names)
-- **Codified Prompting**: Analysis agents output pseudocode plans before execution
-- **Rate Limiting**: Built-in rate limiting to avoid API throttling
-- **Automated Reporting**: Generates markdown reports with analysis findings
+- **Multi-agent architecture**
+  - **Dynamic mode** (default): Gemini **supervisor** + **7 specialists** (cleaning, feature engineering, class imbalance, EDA, visualization, statistics, reporter) plus routing outcomes **CHAT** / **DONE**; all share one **stateful Python session** (`python_stateful_executor`).
+  - **Sequential mode** (`WORKFLOW_MODE=sequential`): **10 phase agents** in fixed order (load → inspect → validate → clean → transform → EDA → visualize → statistics → report).
+- **Persisted supervisor chat**: `manager_chat.jsonl` per run; long threads summarized when over `MANAGER_CHAT_BUDGET_CHARS` → optional `conversation_summary.txt`.
+- **`chat_turn` rows**: Extra JSONL entries for CHAT replies (omitted from the manager prompt block to avoid duplicating assistant JSON).
+- **Deterministic dataset brief**: `dataset_brief.txt` per run (time-series heuristics when applicable).
+- **Kernel snapshots**: After each specialist step, optional `kernel_snapshot/` (Parquet + `meta.json`) for resume; `SESSION_SNAPSHOT=0` disables. Requires **pyarrow** (see `requirements.txt`).
+- **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** after the batch run so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`). Use `--no-interactive` or `INTERACTIVE_SESSION=0` to exit immediately after the report. **Sequential** mode does not use this loop.
+- **Local HTTP API** (optional): `server.py` + Uvicorn — same rules as CLI; see [Usage](#usage).
+- **Core mode prompting**: Dynamic columns (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`); no hardcoded column names.
+- **Codified prompting**: Analysis agents plan (pseudocode) before executing; inspector-style retries on errors.
+- **Step delays & retries**: Configurable pause between supervisor turns (`DYNAMIC_STEP_DELAY_SECONDS`); task retries with backoff in code — not a separate “API rate limiter,” but reduces burst load on the LLM.
 
 ## Requirements
 
 - Python 3.9+
-- Google Gemini API key
+- Google Gemini API key (`GEMINI_API_KEY`)
+- **pyarrow** (for Parquet snapshots; installed via `requirements.txt`)
 - AgentOps API key (optional, for monitoring)
 
 ## Setup
@@ -23,7 +30,7 @@ A multi-agent sequential pipeline for automated data analysis using CrewAI and G
 
 ```bash
 git clone <repository-url>
-cd crewai-data-analysis
+cd <your-repo-folder>   # e.g. crewai-data-analysis-2
 ```
 
 ### 2. Create a virtual environment
@@ -33,11 +40,13 @@ python -m venv venv
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 .\venv\Scripts\Activate.ps1
 ```
 
 **Linux/Mac:**
+
 ```bash
 source venv/bin/activate
 ```
@@ -50,7 +59,7 @@ pip install -r requirements.txt
 
 ### 4. Fix Windows-specific bug (if on Windows)
 
-CrewAI has a SIGHUP bug on Windows. Run the fix script:
+CrewAI can hit a SIGHUP issue on Windows. Run:
 
 ```bash
 python fix_bug.py
@@ -62,20 +71,29 @@ python fix_bug.py
 cp .env.example .env
 ```
 
-Edit `.env` and add your API keys:
+Edit `.env` and set at least:
 
 ```
 GEMINI_API_KEY=your-gemini-api-key-here
-DATASET_PATH=Housing.csv
+DATASET_PATH=your_dataset.csv
 OUTPUT_DIR=./analysis_results
 
-# Optional: Enable AgentOps monitoring
-AGENTOPS_API_KEY=your-agentops-api-key-here
+WORKFLOW_MODE=dynamic
+USER_ANALYSIS_PROMPT=Your analysis goals in plain language
+# Optional: resume — path to an existing run_* folder
+# RESUME_RUN_DIR=./analysis_results/run_YYYYMMDD_HHMMSS
+
+# Interactive after dynamic run: unset = on for dynamic; 0 = off; 1 = on
+# INTERACTIVE_SESSION=
+
+# Optional: AgentOps monitoring
+# AGENTOPS_API_KEY=your-agentops-api-key-here
 ```
 
-**Get your API keys:**
-- Gemini: https://aistudio.google.com/app/apikey
-- AgentOps: https://app.agentops.ai (free)
+**Get API keys:**
+
+- Gemini: https://aistudio.google.com/app/apikey  
+- AgentOps: https://app.agentops.ai (optional)
 
 ## Usage
 
@@ -85,96 +103,160 @@ AGENTOPS_API_KEY=your-agentops-api-key-here
 python run.py
 ```
 
-The pipeline will:
-1. Load and analyze your dataset
-2. Clean and transform the data
-3. Perform exploratory data analysis
-4. Generate visualizations
-5. Run statistical tests
-6. Create a markdown report
+**Dynamic mode (default):** runs the supervisor batch, then **by default** opens the **interactive** `>` prompt (same kernel). **`--no-interactive`** or **`INTERACTIVE_SESSION=0`** skips that and exits after the final report step.
+
+CLI overrides (optional):
+
+```bash
+python run.py --workflow-mode dynamic --resume ./analysis_results/run_20260101_120000 --follow-up "Emphasize outliers in price"
+python run.py --no-interactive
+python run.py --interactive
+```
+
+**Interactive commands:** `/report` (regenerate full markdown report), `exit` / `quit` / `q`. `CHAT` supervisor turns do not consume `DYNAMIC_MAX_STEPS` (only specialist Crew runs do).
+
+**Kernel snapshot (resume):** Outputs under `analysis_results/run_*/kernel_snapshot/`. Start with `RESUME_RUN_DIR` (or `--resume`) pointing at that folder to reload frames + chat/history.
+
+**Local HTTP API:**
+
+```bash
+uvicorn server:app --host 127.0.0.1 --port 8765
+```
+
+- `GET /health` — liveness and `run_id`
+- `POST /pipeline` — one dynamic batch (`skip_terminal_reporter`); resets HTTP interactive state for a fresh chat session
+- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (else `USER_ANALYSIS_PROMPT`)
+- `POST /report` — terminal-style reporter + save report
+- `POST /reset` — rebuild workflow; optional `{"resume_run_dir": "..."}`
+
+With **`WORKFLOW_MODE=dynamic`**, the supervisor chooses specialists using JSON decisions; transcripts go to `manager_chat.jsonl`. Use **`WORKFLOW_MODE=sequential`** for the fixed-order pipeline only.
+
+**Pipeline flow (summary):**
+
+1. Load CSV into the shared Python session; write `dataset_brief.txt`.
+2. **Dynamic:** supervisor loop → specialists + JSONL/history. **Sequential:** fixed agent chain.
+3. Write `analysis_report_<run_id>.md` under the run folder (and interactive `/report` or post-loop generation as applicable).
 
 ### Output
 
-Results are saved to timestamped directories:
+Results go under timestamped directories, for example:
+
 ```
 analysis_results/
 └── run_20251230_220626/
     ├── analysis_report_20251230_220626.md
+    ├── dataset_brief.txt
+    ├── manager_chat.jsonl
+    ├── run_history.json
+    ├── session_meta.json
+    ├── kernel_snapshot/           # Parquet + meta.json when snapshots enabled
+    ├── conversation_summary.txt   # only if chat summarization ran (size limits)
     └── charts/
-        ├── chart_1.png
-        ├── chart_2.png
-        └── chart_3.png
+        ├── chart_<timestamp>_1.png
+        └── ...
 ```
 
-## Project Structure
+Chart files use **timestamped names**, not fixed `chart_1.png`.
+
+## Project structure
 
 ```
-├── crewai_data_analysis.py  # Main pipeline code with agents and tasks
-├── run.py                   # Entry point script
-├── fix_bug.py               # Windows SIGHUP bug fix
-├── requirements.txt         # Python dependencies
-├── .env.example             # Template for environment variables
-├── .gitignore               # Git ignore rules
-├── Housing.csv              # Sample dataset
-└── analysis_results/        # Generated reports and charts
+├── crewai_data_analysis.py   # Agents, tasks, supervisor, workflow
+├── session_state_store.py    # Kernel snapshot save/load
+├── server.py                 # FastAPI app (optional)
+├── run.py                    # CLI entry point
+├── smoke_deterministic_brief.py
+├── fix_bug.py                # Windows SIGHUP workaround
+├── requirements.txt
+├── .env.example
+├── .gitignore
+└── analysis_results/         # Created on run (gitignored if configured)
 ```
 
-## Agent Architecture
+Sample CSVs (e.g. `Housing.csv`) may or may not be in the repo — set **`DATASET_PATH`** to your file.
 
-| Agent | Role | LLM Config |
-|-------|------|------------|
-| library_import | Environment verification | Short (320 tokens) |
-| data_loading | Data structure summary | Short (320 tokens) |
-| data_inspection | Quality inspection | Medium (640 tokens) |
-| data_validation | Validation rules | Medium (640 tokens) |
-| data_cleaning | Data cleaning | Medium (640 tokens) |
-| data_transformation | Feature engineering | Medium (640 tokens) |
-| eda_analysis | Exploratory analysis | Medium (640 tokens) |
-| visualizations | Chart generation | Short (320 tokens) |
-| statistical_tests | Statistical tests | Medium (640 tokens) |
-| report_generator | Markdown report | Long (1200 tokens) |
+## Agent architecture
 
-## Prompting Strategies
+### Sequential mode (`WORKFLOW_MODE=sequential`)
 
-- **Core Mode**: Agents reference pre-loaded metadata variables (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`) instead of hardcoding column names
-- **Codified Prompting**: Analysis agents output structured pseudocode before execution
-- **Inspector Pattern**: Agents self-correct errors by reading tracebacks and retrying
-- **Token Stratification**: Report agent focuses on high-value insights, ignoring code blocks and verbose logs
+| Agent | Role | LLM (approx.) |
+|-------|------|----------------|
+| library_import | Environment verification | Short |
+| data_loading | Data structure summary | Short |
+| data_inspection | Quality inspection | Medium |
+| data_validation | Validation rules | Medium |
+| data_cleaning | Data cleaning | Medium |
+| data_transformation | Feature engineering | Medium |
+| eda_analysis | Exploratory analysis | Medium |
+| visualizations | Chart generation | Short |
+| statistical_tests | Statistical tests | Medium |
+| report_generator | Markdown report | Long |
 
-## AgentOps Monitoring (Optional)
+### Dynamic mode (`WORKFLOW_MODE=dynamic`)
 
-AgentOps provides observability for the workflow, tracking agent interactions, LLM calls, and task executions.
+Supervisor (Gemini JSON) routes to one of:
 
-### Features
+| Specialist key | Role |
+|----------------|------|
+| cleaning | Env check, validation, `df_clean` |
+| feature_engineering | `df_features`, encoding/scaling |
+| class_imbalance | Label distribution / imbalance |
+| eda | Codified EDA |
+| visualization | Charts (saved under `charts/`; headless Matplotlib `Agg` backend) |
+| statistics | Statistical tests |
+| reporter | Markdown synthesis from session facts + run digests |
 
-- Real-time agent activity tracking
-- LLM token usage monitoring
-- Task completion traces
-- Error debugging
+Routing may also return **CHAT** (user-visible reply, no specialist Crew) or **DONE** (stop batch loop).
 
-When enabled, you'll see `[OK] AgentOps monitoring enabled` in the terminal output.
+## Prompting strategies
+
+- **Core mode**: Use `DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS` (and related globals) instead of hardcoding names.
+- **Codified prompting**: Plan (pseudocode) then execute for analysis steps.
+- **Inspector pattern**: Agents retry using tracebacks where applicable.
+- **Reporter grounding**: Final reports are steered with **session facts** and **run-history excerpts** to reduce generic templates and bracket placeholders.
+
+## AgentOps (optional)
+
+When `AGENTOPS_API_KEY` is set, AgentOps traces agent/LLM activity. You should see a startup line confirming monitoring.
+
+### Deterministic smoke test (no Gemini calls)
+
+Loads a CSV and writes a brief (see script for args):
+
+```bash
+python smoke_deterministic_brief.py path/to/your.csv
+```
 
 ## Troubleshooting
 
-### Windows: SIGHUP Error
+### Windows: SIGHUP error
+
 ```
 AttributeError: module 'signal' has no attribute 'SIGHUP'
 ```
-**Fix:** Run `python fix_bug.py`
 
-### Unicode Encoding Errors
+**Fix:** `python fix_bug.py`
+
+### Unicode / console encoding
+
 ```
 'charmap' codec can't encode character
 ```
-**Fix:** These are cosmetic logging issues and don't affect the analysis. To reduce them, run with UTF-8:
-```powershell
-chcp 65001
-$env:PYTHONIOENCODING="utf-8"
-python run.py
-```
 
-### Google GenAI Provider Not Available
+**Fix (PowerShell):** `chcp 65001` and `$env:PYTHONIOENCODING="utf-8"` before `python run.py`.
+
+### Google GenAI provider
+
 ```
 ImportError: Google Gen AI native provider not available
 ```
-**Fix:** Ensure `crewai[google-genai]` is installed (included in requirements.txt)
+
+**Fix:** `pip install -r requirements.txt` (includes `crewai[google-genai]`).
+
+### Matplotlib: `FigureCanvasAgg is non-interactive`
+
+Agent code may call `plt.show()` while the backend is **Agg** (no GUI). Figures should still be saved under `charts/` via `savefig` / executor behavior; the message is a **warning**, not a fatal error.
+
+### Parquet / snapshot errors
+
+Install **pyarrow**: `pip install pyarrow` (listed in `requirements.txt`).

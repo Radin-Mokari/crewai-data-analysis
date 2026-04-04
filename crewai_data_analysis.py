@@ -3,11 +3,13 @@
 # ============================================================================
 
 import os
+import re
 import json
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Literal, Tuple
 from datetime import datetime
+from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
@@ -18,9 +20,38 @@ import seaborn as sns
 
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
-from pydantic import Field
+from pydantic import Field, BaseModel
 
 import google.generativeai as genai
+
+from session_state_store import save_kernel_snapshot, try_load_kernel_snapshot
+
+
+@dataclass
+class InteractiveSegmentResult:
+    """One user message's supervisor inner loop (until CHAT, DONE, or guardrail)."""
+
+    outcome: Literal["await_user", "session_exit_manager_cap"]
+
+
+@dataclass
+class SupervisorLoopState:
+    """Mutable counters for one dynamic supervisor run (batch or interactive)."""
+
+    last_agent: Optional[str] = None
+    repeat_streak: int = 0
+    specialist_count: int = 0
+    manager_invocations: int = 0
+
+
+SupervisorSingleTurnOutcome = Literal[
+    "continue",
+    "done",
+    "break_interactive",
+    "exit_manager_cap",
+    "exit_specialist_cap",
+    "exit_repeat",
+]
 
 
 # ============================================================================
@@ -99,7 +130,7 @@ dataset_path = r\"\"\"{dataset_path}\"\"\"
 df_raw = _pd.read_csv(dataset_path)
 df_clean = None
 df_features = None
-validation_report = {{}}
+validation_report = []  # list of findings/messages; agents use .append()
 
 # === CORE MODE METADATA ===
 # These variables provide dynamic column awareness for all agents
@@ -109,6 +140,7 @@ CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category']).colum
 BOOLEAN_COLUMNS = df_raw.select_dtypes(include=['bool']).columns.tolist()
 DATASET_SHAPE = df_raw.shape
 DATASET_PATH = dataset_path
+TIME_INDEX_OK = False
 
 # === PRESERVE ORIGINAL COLUMNS (before any transformations) ===
 # These are used by visualization agent for interpretable charts
@@ -150,6 +182,7 @@ def validate_core_state():
                 g.get("df_features") is None or isinstance(g.get("df_features"), pd.DataFrame)
             ),
             "has_validation_report": "validation_report" in g,
+            "time_index_ok": bool(g.get("TIME_INDEX_OK")),
         }
         return flags
 
@@ -625,30 +658,1026 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
 
 
 # ============================================================================
+# PART 4B: DYNAMIC SUPERVISOR (brief, specialists, manager JSON, chat persist)
+# ============================================================================
+
+DYNAMIC_CORE_MODE = (
+    "You operate in CORE MODE within a persistent Python kernel. "
+    "CRITICAL RULES: "
+    "1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. "
+    "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
+    "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
+    "4) Output concise code, no conversational text. "
+    "5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
+)
+
+
+class ManagerDecision(BaseModel):
+    next_agent: Literal[
+        "cleaning",
+        "feature_engineering",
+        "class_imbalance",
+        "eda",
+        "visualization",
+        "statistics",
+        "reporter",
+        "CHAT",
+        "DONE",
+    ]
+    instruction: str = ""
+    rationale: str = ""
+    reply_to_user: Optional[str] = None  # Gemini often returns null; treat as "" everywhere
+
+
+def compute_dataset_brief(executor: PythonSessionTool, run_output_dir: Path) -> Tuple[str, Dict[str, Any]]:
+    code = r"""
+import pandas as _pd
+lines = []
+brief = {"is_time_series": False, "time_column_candidates": [], "shape": None, "columns": []}
+df = df_raw
+brief["shape"] = list(df.shape)
+brief["columns"] = list(DATASET_COLUMNS)
+for col in DATASET_COLUMNS:
+    s = df[col]
+    try:
+        if _pd.api.types.is_datetime64_any_dtype(s):
+            brief["time_column_candidates"].append({"column": col, "reason": "datetime64_dtype"})
+            continue
+    except Exception:
+        pass
+    if s.dtype == object or str(s.dtype) == "string":
+        sample = s.head(min(500, len(s)))
+        try:
+            parsed = _pd.to_datetime(sample, errors="coerce")
+            rate = float(parsed.notna().mean()) if len(sample) else 0.0
+            if rate >= 0.75:
+                brief["time_column_candidates"].append(
+                    {"column": col, "reason": f"parseable_object_rate_{rate:.2f}"}
+                )
+        except Exception:
+            pass
+brief["is_time_series"] = len(brief["time_column_candidates"]) > 0
+lines.append("=== DATASET BRIEF (deterministic) ===")
+lines.append(f"shape: {df.shape[0]} rows x {df.shape[1]} columns")
+lines.append(f"is_time_series: {brief['is_time_series']}")
+if brief["time_column_candidates"]:
+    lines.append("time_column_candidates:")
+    for tc in brief["time_column_candidates"][:12]:
+        lines.append(f"  {tc}")
+missing = df[DATASET_COLUMNS].isnull().sum().sort_values(ascending=False)
+top_miss = missing[missing > 0].head(10)
+if len(top_miss):
+    lines.append("top_missing_counts:")
+    for c, v in top_miss.items():
+        lines.append(f"  {c}: {int(v)}")
+lines.append(f"duplicate_rows: {int(df.duplicated().sum())}")
+DATASET_BRIEF_DICT = brief
+DATASET_BRIEF_TEXT = "\n".join(lines)
+print(DATASET_BRIEF_TEXT)
+"""
+    executor._run(code)
+    brief_text = str(executor.session_globals.get("DATASET_BRIEF_TEXT", ""))
+    brief_dict = executor.session_globals.get("DATASET_BRIEF_DICT")
+    if not isinstance(brief_dict, dict):
+        brief_dict = {"is_time_series": False, "time_column_candidates": [], "shape": [], "columns": []}
+    out_path = Path(run_output_dir) / "dataset_brief.txt"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(brief_text, encoding="utf-8")
+    return brief_text, brief_dict
+
+
+def persist_jsonl_record(path: Path, record: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, ensure_ascii=False)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+
+
+def load_jsonl_records(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
+def manager_records_to_chat_block(records: List[Dict[str, Any]], max_items: int = 28) -> str:
+    """Build prompt block; skips `chat_turn` rows (analytics-only duplicates of CHAT replies)."""
+    parts: List[str] = []
+    for rec in records[-max_items:]:
+        if rec.get("kind") == "chat_turn":
+            continue
+        kind = rec.get("kind", "message")
+        role = rec.get("role", "user")
+        content = str(rec.get("content", ""))[:12000]
+        ts = rec.get("ts", "")
+        parts.append(f"[{ts}][{kind}|{role}]\n{content}")
+    return "\n\n".join(parts)
+
+
+def summarize_manager_chat_head(records: List[Dict[str, Any]]) -> str:
+    """Compact older chat/analysis records for manager context (plan: hybrid memory)."""
+    if not records:
+        return ""
+    api_key = os.getenv("GEMINI_API_KEY")
+    lines: List[str] = []
+    for r in records:
+        if r.get("kind") == "chat_turn":
+            continue
+        lines.append(
+            f"{r.get('kind', '')}|{r.get('role', '')}: {str(r.get('content', ''))[:3500]}"
+        )
+    blob = "\n".join(lines)
+    if len(blob) > 120_000:
+        blob = blob[:120_000] + "\n...(truncated for summarizer)"
+    if not api_key:
+        return "\n".join(f"- {line[:500]}" for line in lines[:30])
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        resp = model.generate_content(
+            "Summarize these supervisor run records for continued routing. "
+            "Bullets: user goals, manager JSON decisions, specialist outcomes, errors. Max ~400 words.\n\n"
+            + blob
+        )
+        return (resp.text or "").strip() or "(empty summary)"
+    except Exception as e:
+        return f"(summarization failed: {e}); fallback:\n" + "\n".join(lines[:12])
+
+
+def build_manager_chat_block_for_llm(
+    records: List[Dict[str, Any]],
+    *,
+    run_output_dir: Optional[Path] = None,
+    max_chars: int = 28000,
+    keep_recent: int = 14,
+) -> str:
+    """Sliding window + rolling summary when the chat block exceeds a character budget."""
+    if not records:
+        return ""
+    budget = int(os.getenv("MANAGER_CHAT_BUDGET_CHARS", str(max_chars)))
+    tail_n = max(4, int(os.getenv("MANAGER_CHAT_KEEP_RECENT", str(keep_recent))))
+
+    full_block = manager_records_to_chat_block(records, max_items=len(records))
+    if len(full_block) <= budget:
+        return full_block
+
+    head = records[:-tail_n] if len(records) > tail_n else []
+    tail = records[-tail_n:] if len(records) > tail_n else records
+    summary = summarize_manager_chat_head(head) if head else ""
+    if run_output_dir and summary:
+        try:
+            (Path(run_output_dir) / "conversation_summary.txt").write_text(summary, encoding="utf-8")
+        except OSError:
+            pass
+
+    tail_block = manager_records_to_chat_block(tail, max_items=len(tail))
+    combined = f"[EARLIER_CONTEXT_SUMMARY]\n{summary}\n\n---\n\n{tail_block}"
+    if len(combined) > budget:
+        tail_allow = max(2000, budget - len(summary) - 80)
+        tail_block = tail_block[-tail_allow:]
+        combined = f"[EARLIER_CONTEXT_SUMMARY]\n{summary}\n\n---\n\n{tail_block}"
+    return combined
+
+
+def parse_manager_decision(text: str) -> Optional[ManagerDecision]:
+    raw = text.strip()
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if m:
+        raw = m.group(0)
+    try:
+        return ManagerDecision.model_validate_json(raw)
+    except Exception:
+        return None
+
+
+def invoke_manager_decision(
+    *,
+    chat_block: str,
+    user_payload: str,
+    system_instruction: str,
+) -> ManagerDecision:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
+    full_prompt = chat_block + "\n\n---\n\n" + user_payload
+    last_snippet = ""
+    for attempt in range(3):
+        resp = model.generate_content(full_prompt)
+        text = (resp.text or "").strip()
+        decision = parse_manager_decision(text)
+        if decision is not None:
+            return decision
+        last_snippet = text[:1800]
+        full_prompt = (
+            "Return ONLY JSON: "
+            '{"next_agent":"...","instruction":"...","rationale":"...","reply_to_user":"..."} '
+            "reply_to_user is required when next_agent is CHAT (user-visible answer). "
+            "next_agent must be one of: cleaning, feature_engineering, class_imbalance, eda, visualization, "
+            "statistics, reporter, CHAT, DONE. No markdown.\nInvalid output:\n"
+            + last_snippet
+        )
+    raise ValueError(f"Manager JSON parse failed after retries. Last snippet: {last_snippet}")
+
+
+def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
+    llm_medium = _make_gemini_llm(max_output_tokens=640, thinking_budget=256)
+    llm_long = _make_gemini_llm(max_output_tokens=1200, thinking_budget=512)
+    cm = DYNAMIC_CORE_MODE
+
+    return {
+        "cleaning": Agent(
+            role="Data Cleaning & Preparation Specialist",
+            goal="Verify environment, profile df_raw, validate, and produce df_clean using dynamic columns.",
+            backstory=(
+                f"{cm} You absorb former pipeline steps: env check, structure summary, quality inspection, "
+                "validation_report population, and cleaning. For time-series data, set TIME_INDEX_OK = True only after "
+                "df_clean is sorted by the primary time column. INSPECTOR MODE on errors."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "feature_engineering": Agent(
+            role="Feature Engineering Expert",
+            goal="Create df_features from df_clean with ML-oriented transforms.",
+            backstory=(
+                f"{cm} For time-indexed data: lags/rolling use past values only (no future leakage). Do not shuffle rows. "
+                "INSPECTOR MODE on errors."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "class_imbalance": Agent(
+            role="Class Imbalance Analyst",
+            goal="Assess label distribution and imbalance using Core Mode columns.",
+            backstory=(
+                f"{cm} Detect plausible targets without hardcoding. Use value_counts and ratios. "
+                "If labels are time-ordered, avoid suggesting random shuffles for balancing."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "eda": Agent(
+            role="Exploratory Data Analysis Specialist",
+            goal="EDA with codified plan then execution.",
+            backstory=(
+                "CODIFIED PROMPTING: pseudocode plan first, then execute. "
+                "Use df_features if not None else df_clean else df_raw. INSPECTOR MODE."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "visualization": Agent(
+            role="Data Visualization Specialist",
+            goal="Insightful charts from df_clean for interpretability.",
+            backstory=(
+                "Analyze skew/cardinality/correlations before plotting. Prefer df_clean and ORIGINAL_* semantics. "
+                "For time series use line/trend-style plots when appropriate. DO NOT call plt.savefig(); tool handles it."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "statistics": Agent(
+            role="Statistical Analysis Expert",
+            goal="Statistical tests with codified prompting.",
+            backstory=(
+                "CODIFIED PLAN first, then execute. Verify columns exist. For time series, favor stationarity/autocorr checks "
+                "when relevant."
+            ),
+            llm=llm_medium,
+            tools=[executor_tool],
+            verbose=True,
+            allow_delegation=False,
+        ),
+        "reporter": Agent(
+            role="Technical Report Writer",
+            goal="Produce concise markdown using ONLY SESSION FACTS and step excerpts in the task—never generic templates.",
+            backstory=(
+                "Technical writer. OUTPUT ONLY markdown per task instructions—no preamble. Avoid code blocks unless asked. "
+                "Never use [Number] or other bracket placeholders; every claim must trace to text in the task."
+            ),
+            llm=llm_long,
+            tools=[],
+            verbose=True,
+            allow_delegation=False,
+        ),
+    }
+
+
+def _ts_task_appendix(agent_id: str) -> str:
+    common = (
+        "\n\nTIME-SERIES PROTOCOL: preserve chronological order; never random row shuffling for train/test; "
+        "no future leakage in derived features."
+    )
+    if agent_id == "cleaning":
+        return common + (
+            " Parse/normalize primary timestamp, sort rows, handle duplicate timestamps, report gaps. "
+            "Set TIME_INDEX_OK = True in globals() only after df_clean is chronologically sorted."
+        )
+    if agent_id == "feature_engineering":
+        return common + " Use shifts/rolling windows that only reference past values."
+    if agent_id in ("eda", "visualization"):
+        return common + " Prefer time-indexed visualizations (trend/seasonality)."
+    if agent_id == "statistics":
+        return common + " Prefer stationarity / autocorrelation checks when appropriate."
+    if agent_id == "class_imbalance":
+        return common + " Any balancing strategy must respect time order."
+    return common
+
+
+def build_specialist_task(
+    *,
+    agent_id: str,
+    agents: Dict[str, Agent],
+    user_prompt: str,
+    manager_instruction: str,
+    use_ts_appendix: bool,
+    reporter_session_facts: Optional[str] = None,
+    reporter_run_history: Optional[List[Dict[str, Any]]] = None,
+) -> Task:
+    core_mode_prefix = "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS. Do NOT read_csv.\n\n"
+    ts_block = _ts_task_appendix(agent_id) if use_ts_appendix else ""
+    header = (
+        f"USER GOAL:\n{user_prompt}\n\n"
+        f"MANAGER INSTRUCTION:\n{manager_instruction}\n"
+        f"{ts_block}\n\n"
+    )
+    if agent_id == "cleaning":
+        desc = (
+            header
+            + core_mode_prefix
+            + "TASK: Full preparation — env check, schema/quality summary, populate validation_report, build df_clean; print shape."
+        )
+    elif agent_id == "feature_engineering":
+        desc = (
+            header
+            + core_mode_prefix
+            + "TASK: df_features from df_clean; encode/scale; update numeric/categoric column lists; summarize."
+        )
+    elif agent_id == "class_imbalance":
+        desc = (
+            header
+            + core_mode_prefix
+            + "TASK: Candidate targets via metadata; value_counts; imbalance metrics; recommendations."
+        )
+    elif agent_id == "eda":
+        desc = header + "CODIFIED EDA: plan then execute on best df_*."
+    elif agent_id == "visualization":
+        desc = header + "SMART VIZ: 3–5 charts on df_clean using ORIGINAL_* where appropriate."
+    elif agent_id == "statistics":
+        desc = header + "CODIFIED STATISTICS: plan then tests with dynamic columns."
+    elif agent_id == "reporter":
+        desc = header + (manager_instruction or "Synthesize the final report.")
+        blocks: List[str] = [desc, REPORTER_GROUNDING_RULES]
+        if reporter_session_facts:
+            blocks.append("SESSION FACTS (deterministic — prefer these numbers over memory):\n" + reporter_session_facts)
+        if reporter_run_history is not None:
+            digest = format_run_history_digest(
+                reporter_run_history,
+                last_n=50,
+                max_instruction_chars=500,
+                max_excerpt_chars=6000,
+            )
+            blocks.append("COMPLETED ANALYSIS STEPS (verbatim excerpts — your only source for process details):\n" + digest)
+        desc = "\n\n".join(blocks)
+    else:
+        desc = header + core_mode_prefix + "Execute the manager instruction."
+
+    return Task(
+        description=desc,
+        expected_output=f"Completed work for {agent_id} with concise summary.",
+        agent=agents[agent_id],
+        async_execution=False,
+    )
+
+
+def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
+    ts = bool(brief_dict.get("is_time_series"))
+    ts_rules = ""
+    if ts:
+        ts_rules = (
+            " Dataset is flagged time-series: establish chronological df_clean first. Until the session marks "
+            "TIME_INDEX_OK true, do not delegate feature_engineering. Forbid instructions that shuffle time order.\n"
+        )
+    return ts_rules + (
+        "You route specialists for a shared Python data session. "
+        "Output ONLY valid JSON (no markdown) with keys: next_agent, instruction, rationale, reply_to_user (optional string). "
+        "next_agent must be one of: cleaning, feature_engineering, class_imbalance, eda, visualization, statistics, "
+        "reporter, CHAT, DONE. "
+        "Use CHAT when you should answer the user conversationally without running a specialist — set reply_to_user to the "
+        "full user-visible answer (markdown/plain text); instruction may be empty. "
+        "Use DONE when analysis is sufficient for a final report; you may set reply_to_user for a short closing note.\n"
+        "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
+        "unless the user explicitly asks for an early summary.\n"
+    )
+
+
+def format_run_history_digest(
+    entries: List[Dict[str, Any]],
+    last_n: int = 5,
+    *,
+    max_instruction_chars: int = 320,
+    max_excerpt_chars: int = 900,
+) -> str:
+    """Compact step list for prompts. Supervisor uses short excerpts; reporter/report use larger limits."""
+    if not entries:
+        return "(no steps yet)"
+    lines: List[str] = []
+    for e in entries[-last_n:]:
+        instr = str(e.get("instruction", ""))[:max_instruction_chars]
+        ex = str(e.get("output_excerpt", ""))[:max_excerpt_chars]
+        lines.append(
+            f"- step {e.get('step')}: {e.get('agent')} — instruction: {instr}\n" f"  excerpt: {ex}"
+        )
+    return "\n".join(lines)
+
+
+def _report_text_has_placeholders(text: str) -> bool:
+    """True if output looks like an unfilled template (do not reuse as final report)."""
+    if not text or len(text) < 80:
+        return True
+    markers = (
+        "[Number]",
+        "[Percentage]",
+        "[List",
+        "[Description]",
+        "[Value]",
+        "[Target",
+        "[Treatment",
+        "[Imputation",
+        "`[Number]`",
+    )
+    return any(m in text for m in markers)
+
+
+REPORTER_GROUNDING_RULES = (
+    "CRITICAL — report integrity:\n"
+    "- Use ONLY facts from SESSION FACTS and COMPLETED STEPS below. Quote numbers and column names exactly as they appear there.\n"
+    "- Forbidden: placeholder tokens like [Number], [Percentage], [List], [Description], [Value], or bracketed templates.\n"
+    "- Forbidden: substituting a different dataset (e.g. Ames Housing / SalePrice, telco churn, customer_id) if this run is another dataset.\n"
+    "- If the digest does not state a figure, write 'not detailed in prior steps' — do not invent statistics.\n"
+    "- Start with '# Executive Summary' and keep markdown factual and specific to this run.\n"
+)
+
+
+# ============================================================================
 # PART 5: WORKFLOW ORCHESTRATION WITH RETRIES
 # ============================================================================
 
 class DataAnalysisWorkflow:
     """Main workflow controller for sequential data analysis pipeline."""
 
-    def __init__(self, dataset_path: str, output_dir: str = "./analysis_results"):
+    def __init__(
+        self,
+        dataset_path: str,
+        output_dir: str = "./analysis_results",
+        resume_from: Optional[str] = None,
+    ):
         self.dataset_path = str(Path(dataset_path).resolve())
         self.output_dir = Path(output_dir).resolve()
-        self.output_dir.mkdir(exist_ok=True)
-        
-        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_output_dir = self.output_dir / f"run_{self.run_id}"
-        self.run_output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        resume_raw = (resume_from or os.getenv("RESUME_RUN_DIR", "") or "").strip()
+        if not resume_raw:
+            rid = (os.getenv("RESUME_RUN_ID") or os.getenv("RUN_ID") or "").strip()
+            if rid:
+                cand = self.output_dir / f"run_{rid}"
+                if cand.is_dir():
+                    resume_raw = str(cand)
+        if resume_raw:
+            self.run_output_dir = Path(resume_raw).resolve()
+            self.run_output_dir.mkdir(parents=True, exist_ok=True)
+            stem = self.run_output_dir.name
+            self.run_id = stem[4:] if stem.startswith("run_") else datetime.now().strftime("%Y%m%d_%H%M%S")
+        else:
+            self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.run_output_dir = self.output_dir / f"run_{self.run_id}"
+            self.run_output_dir.mkdir(exist_ok=True)
 
         self.executor = PythonSessionTool(output_dir=str(self.run_output_dir / "charts"))
         self.executor.init_session(self.dataset_path)
+        if resume_raw:
+            if try_load_kernel_snapshot(self.executor, self.run_output_dir):
+                print("[RESUME] Restored kernel state from kernel_snapshot/ (Parquet + meta.json).")
+            else:
+                print(
+                    "[RESUME] No kernel_snapshot under this run folder — using CSV init only. "
+                    "Save snapshots by running specialists (SESSION_SNAPSHOT=1, default)."
+                )
 
         self.agents = create_agents(self.executor)
         self.tasks = create_tasks(self.agents)
 
+        self.manager_chat_path = self.run_output_dir / "manager_chat.jsonl"
+        self.session_meta_path = self.run_output_dir / "session_meta.json"
+        self.run_history_path = self.run_output_dir / "run_history.json"
+        self.manager_chat_records: List[Dict[str, Any]] = []
+        self.run_history_dynamic: List[Dict[str, Any]] = []
+        self.brief_text: str = ""
+        self.brief_dict: Dict[str, Any] = {}
+
+        if resume_raw and self.manager_chat_path.exists():
+            self.manager_chat_records = load_jsonl_records(self.manager_chat_path)
+        if resume_raw and self.run_history_path.exists():
+            try:
+                loaded = json.loads(self.run_history_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    self.run_history_dynamic = loaded
+            except Exception:
+                self.run_history_dynamic = []
+
         self.results: Dict[str, Any] = {}
         self.charts: List[Path] = []
         self.report_path: Optional[Path] = None
+
+    def _append_manager_chat_record(self, kind: str, role: str, content: str, **extra: Any) -> None:
+        rec = {
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "kind": kind,
+            "role": role,
+            "content": content,
+            **extra,
+        }
+        self.manager_chat_records.append(rec)
+        persist_jsonl_record(self.manager_chat_path, rec)
+
+    def _save_dynamic_run_history(self) -> None:
+        self.run_history_path.write_text(
+            json.dumps(self.run_history_dynamic, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _save_kernel_snapshot_safe(self) -> None:
+        try:
+            save_kernel_snapshot(self.executor, self.run_output_dir)
+        except Exception as e:
+            print(f"[SESSION_SNAPSHOT] Save failed: {e}")
+
+    def ensure_dynamic_brief(self) -> None:
+        """Compute dataset brief for supervisor prompts if not already loaded."""
+        if self.brief_text:
+            return
+        self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
+
+    def get_interactive_specialists(self) -> Dict[str, Agent]:
+        if getattr(self, "_interactive_specialists_cache", None) is None:
+            self._interactive_specialists_cache = create_dynamic_specialist_agents(self.executor)
+        return self._interactive_specialists_cache
+
+    def _next_specialist_step_index(self) -> int:
+        if not self.run_history_dynamic:
+            return 1
+        return max(int(e.get("step", 0)) for e in self.run_history_dynamic) + 1
+
+    def _session_facts_markdown(self) -> str:
+        """Deterministic facts from the Python kernel for report grounding (not LLM-invented)."""
+        g = self.executor.session_globals
+        lines: List[str] = []
+        dp = g.get("DATASET_PATH")
+        if dp:
+            lines.append(f"- Data file: {dp}")
+        dr = g.get("df_raw")
+        if isinstance(dr, pd.DataFrame):
+            lines.append(f"- df_raw: {dr.shape[0]} rows × {dr.shape[1]} columns")
+            lines.append(f"- df_raw columns: {', '.join(str(c) for c in dr.columns.tolist())}")
+        dc = g.get("df_clean")
+        if isinstance(dc, pd.DataFrame):
+            lines.append(f"- df_clean: {dc.shape[0]} rows × {dc.shape[1]} columns")
+        dfeat = g.get("df_features")
+        if isinstance(dfeat, pd.DataFrame):
+            lines.append(f"- df_features: {dfeat.shape[0]} rows × {dfeat.shape[1]} columns")
+        nc = g.get("NUMERIC_COLUMNS")
+        cc = g.get("CATEGORICAL_COLUMNS")
+        if isinstance(nc, list):
+            lines.append(f"- NUMERIC_COLUMNS ({len(nc)}): {', '.join(str(x) for x in nc[:40])}" + (" …" if len(nc) > 40 else ""))
+        if isinstance(cc, list):
+            lines.append(f"- CATEGORICAL_COLUMNS ({len(cc)}): {', '.join(str(x) for x in cc[:40])}" + (" …" if len(cc) > 40 else ""))
+        vr = g.get("validation_report")
+        if isinstance(vr, list) and vr:
+            lines.append("- validation_report (sample entries):")
+            for item in vr[:35]:
+                lines.append(f"  - {str(item)[:480]}")
+        elif isinstance(vr, dict) and vr:
+            snippet = json.dumps(vr, ensure_ascii=False, default=str)[:3500]
+            lines.append(f"- validation_report (JSON): {snippet}")
+        lines.append(f"- TIME_INDEX_OK: {g.get('TIME_INDEX_OK')}")
+        return "\n".join(lines) if lines else "(no session facts available)"
+
+    def _run_dynamic_terminal_reporter(self, user_prompt: str, specialists: Dict[str, Agent]) -> None:
+        """Synthesize markdown report from brief + run history (reuses last reporter specialist output when valid)."""
+        hist_summary = format_run_history_digest(
+            self.run_history_dynamic,
+            last_n=80,
+            max_instruction_chars=500,
+            max_excerpt_chars=6000,
+        )
+        session_facts = self._session_facts_markdown()
+        last_entry = self.run_history_dynamic[-1] if self.run_history_dynamic else None
+        reused_reporter = False
+        if last_entry and last_entry.get("agent") == "reporter":
+            rstep = last_entry.get("step")
+            tk_rep = f"dynamic_step_{rstep}_reporter"
+            rep_text = str(self.results.get(tk_rep, "")).strip()
+            if (rep_text.startswith("#") or "Executive Summary" in rep_text[:500]) and not _report_text_has_placeholders(
+                rep_text
+            ):
+                self.results["report"] = rep_text
+                reused_reporter = True
+                print("[REPORT] Reusing output from last reporter specialist step.")
+            elif rep_text and _report_text_has_placeholders(rep_text):
+                print("[REPORT] Last reporter output had placeholders — regenerating with full context.")
+
+        if not reused_reporter:
+            report_desc = (
+                f"USER GOAL:\n{user_prompt}\n\n"
+                f"{REPORTER_GROUNDING_RULES}\n\n"
+                f"DATASET BRIEF:\n{self.brief_text[:4000]}\n\n"
+                f"SESSION FACTS:\n{session_facts}\n\n"
+                f"RUN HISTORY (digest):\n{hist_summary}\n\n"
+                "OUTPUT ONLY markdown. Start with '# Executive Summary'. Max ~800 words. No code blocks. "
+                "Sections: Executive Summary, Data Overview, Quality & Cleaning, Key Findings, Statistical Highlights, "
+                "Recommendations. Every statistic must match SESSION FACTS or RUN HISTORY excerpts above."
+            )
+            rep_task = Task(
+                description=report_desc,
+                expected_output="Markdown report.",
+                agent=specialists["reporter"],
+                async_execution=False,
+            )
+            try:
+                rep_result = rep_task.execute_sync(agent=specialists["reporter"])
+                self.results["report"] = str(rep_result)
+            except Exception as e:
+                print(f"[REPORT] Error: {e}")
+                self.results["report"] = (
+                    f"# Executive Summary\n\nReport generation failed: {e}\n\n## Run history\n{hist_summary[:6000]}"
+                )
+
+    def _dynamic_supervisor_single_turn(
+        self,
+        user_prompt: str,
+        specialists: Dict[str, Agent],
+        system_instruction: str,
+        state: SupervisorLoopState,
+        *,
+        step_delay: float,
+        max_specialist_steps: int,
+        max_manager_turns: int,
+        interactive_chat_breaks: bool,
+        log: Optional[List[str]] = None,
+    ) -> SupervisorSingleTurnOutcome:
+        """One manager JSON decision: CHAT, DONE, guardrail stop, or one specialist Crew run."""
+
+        def _out(s: str) -> None:
+            if log is not None:
+                log.append(s)
+            else:
+                print(s)
+
+        state.manager_invocations += 1
+        if max_manager_turns > 0 and state.manager_invocations > max_manager_turns:
+            if interactive_chat_breaks:
+                _out("[GUARDRAIL] INTERACTIVE_MAX_MANAGER_TURNS exceeded — stopping interactive loop.")
+            else:
+                _out("[GUARDRAIL] Stopping: INTERACTIVE_MAX_MANAGER_TURNS exceeded.")
+            return "exit_manager_cap"
+
+        flags = self.executor.validate_state()
+        g = self.executor.session_globals
+        df_clean_missing = g.get("df_clean") is None
+
+        chat_block = build_manager_chat_block_for_llm(
+            self.manager_chat_records,
+            run_output_dir=self.run_output_dir,
+        )
+        digest = format_run_history_digest(self.run_history_dynamic)
+        user_payload = (
+            f"user_goal:\n{user_prompt}\n\n"
+            f"validate_state:\n{json.dumps(flags)}\n\n"
+            f"run_history_digest:\n{digest}\n"
+        )
+        if state.repeat_streak >= 2:
+            user_payload += (
+                "\nGUARDRAIL_HINT: The same specialist role was chosen repeatedly. "
+                "Pick a different next_agent, narrow the instruction, use CHAT to explain, or DONE if satisfied.\n"
+            )
+        decision = invoke_manager_decision(
+            chat_block=chat_block,
+            user_payload=user_payload,
+            system_instruction=system_instruction,
+        )
+
+        na = decision.next_agent
+        if na not in ("DONE", "CHAT", "cleaning") and df_clean_missing:
+            decision = ManagerDecision(
+                next_agent="cleaning",
+                instruction=(
+                    "Run full preparation: env check, validation_report, and df_clean before other specialists."
+                ),
+                rationale="guardrail_df_clean_required",
+            )
+            na = decision.next_agent
+        if (
+            self.brief_dict.get("is_time_series")
+            and decision.next_agent == "feature_engineering"
+            and not g.get("TIME_INDEX_OK")
+        ):
+            decision = ManagerDecision(
+                next_agent="cleaning",
+                instruction=(
+                    "Time-series: ensure df_clean is chronologically ordered by the time column; "
+                    "set TIME_INDEX_OK = True in globals() when done."
+                ),
+                rationale="guardrail_time_index",
+            )
+            na = decision.next_agent
+
+        self._append_manager_chat_record("message", "assistant", decision.model_dump_json())
+
+        if decision.next_agent == "DONE":
+            note = (decision.reply_to_user or "").strip()
+            if note:
+                _out(f"\n[MANAGER]\n{note}\n")
+            return "break_interactive" if interactive_chat_breaks else "done"
+
+        if decision.next_agent == "CHAT":
+            reply = (decision.reply_to_user or "").strip() or (decision.rationale or "").strip()
+            if reply:
+                _out(f"\n[MANAGER]\n{reply}\n")
+                self._append_manager_chat_record(
+                    "chat_turn",
+                    "assistant",
+                    reply,
+                    next_agent="CHAT",
+                )
+            state.repeat_streak = 0
+            state.last_agent = None
+            time.sleep(step_delay)
+            return "break_interactive" if interactive_chat_breaks else "continue"
+
+        if state.specialist_count >= max_specialist_steps:
+            if interactive_chat_breaks:
+                _out("[GUARDRAIL] DYNAMIC_MAX_STEPS (specialist runs) reached — type /report or exit.")
+            else:
+                _out("[GUARDRAIL] Stopping: DYNAMIC_MAX_STEPS (specialist runs) reached.")
+            return "exit_specialist_cap"
+
+        if decision.next_agent == state.last_agent:
+            state.repeat_streak += 1
+        else:
+            state.repeat_streak = 0
+        state.last_agent = decision.next_agent
+        if state.repeat_streak >= 5:
+            if interactive_chat_breaks:
+                _out("[GUARDRAIL] Same agent repeated — stopping this turn.")
+            else:
+                _out("[GUARDRAIL] Stopping: same agent repeated without progress.")
+            return "exit_repeat"
+
+        state.specialist_count += 1
+        step = self._next_specialist_step_index()
+        use_ts = bool(self.brief_dict.get("is_time_series"))
+        rep_facts: Optional[str] = None
+        rep_hist: Optional[List[Dict[str, Any]]] = None
+        if decision.next_agent == "reporter":
+            rep_facts = self._session_facts_markdown()
+            rep_hist = list(self.run_history_dynamic)
+        task = build_specialist_task(
+            agent_id=decision.next_agent,
+            agents=specialists,
+            user_prompt=user_prompt,
+            manager_instruction=decision.instruction,
+            use_ts_appendix=use_ts,
+            reporter_session_facts=rep_facts,
+            reporter_run_history=rep_hist,
+        )
+        task_key = f"dynamic_step_{step}_{decision.next_agent}"
+        result = self._run_task_with_retry(
+            agent=specialists[decision.next_agent],
+            task=task,
+            task_key=task_key,
+            extra_inputs={},
+        )
+        excerpt = str(result)[:4500] if result is not None else ""
+        post_flags = self.executor.validate_state()
+        self.run_history_dynamic.append(
+            {
+                "step": step,
+                "agent": decision.next_agent,
+                "instruction": decision.instruction,
+                "output_excerpt": excerpt,
+                "state_flags": dict(post_flags),
+            }
+        )
+        self._save_dynamic_run_history()
+        self._append_manager_chat_record(
+            "analysis_digest",
+            "user",
+            f"[Analysis step {step} | {decision.next_agent}]\n{excerpt}",
+        )
+        self._save_kernel_snapshot_safe()
+        time.sleep(step_delay)
+        return "continue"
+
+    def run_dynamic_team_pipeline(
+        self,
+        user_prompt: str,
+        max_steps: int = 18,
+        followup_messages: Optional[List[str]] = None,
+        *,
+        skip_terminal_reporter: bool = False,
+    ) -> Dict[str, Any]:
+        """Supervisor loop: manager JSON routing + single-agent crews + chat/run JSON persistence.
+
+        DYNAMIC_MAX_STEPS caps **specialist** Crew executions only; CHAT turns do not consume it.
+        """
+        max_specialist_steps = int(os.getenv("DYNAMIC_MAX_STEPS", str(max_steps)))
+        step_delay = float(os.getenv("DYNAMIC_STEP_DELAY_SECONDS", "2"))
+        mgr_cap_raw = os.getenv("INTERACTIVE_MAX_MANAGER_TURNS", "").strip()
+        max_manager_turns = int(mgr_cap_raw) if mgr_cap_raw.isdigit() else 0
+
+        print(f"\n{'='*70}")
+        print("DYNAMIC SUPERVISOR PIPELINE (STATEFUL)")
+        print(f"Dataset: {self.dataset_path}")
+        print(f"Run ID: {self.run_id}")
+        print(f"Output: {self.run_output_dir}")
+        print(f"Max specialist steps: {max_specialist_steps}")
+        if max_manager_turns:
+            print(f"Max manager invocations (total): {max_manager_turns}")
+        print(f"{'='*70}\n")
+
+        self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
+        specialists = create_dynamic_specialist_agents(self.executor)
+
+        meta = {
+            "schema": 1,
+            "mode": "dynamic_supervisor",
+            "dataset_path": self.dataset_path,
+            "run_id": self.run_id,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        try:
+            self.session_meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+        if not self.manager_chat_records:
+            self._append_manager_chat_record(
+                "message",
+                "user",
+                f"Initial user goal:\n{user_prompt}\n\nDataset brief:\n{self.brief_text[:8000]}",
+            )
+
+        _fus = list(followup_messages or [])
+        _env_fu = os.getenv("USER_FOLLOWUP", "").strip()
+        if _env_fu:
+            _fus.append(_env_fu)
+        for _txt in _fus:
+            t = str(_txt).strip()
+            if t:
+                self._append_manager_chat_record("message", "user", f"User follow-up:\n{t}")
+
+        system_instruction = build_manager_system_instruction(self.brief_dict)
+        sup_state = SupervisorLoopState(specialist_count=len(self.run_history_dynamic))
+
+        while True:
+            turn = self._dynamic_supervisor_single_turn(
+                user_prompt,
+                specialists,
+                system_instruction,
+                sup_state,
+                step_delay=step_delay,
+                max_specialist_steps=max_specialist_steps,
+                max_manager_turns=max_manager_turns,
+                interactive_chat_breaks=False,
+                log=None,
+            )
+            if turn == "continue":
+                continue
+            if turn == "done":
+                break
+            if turn in ("exit_manager_cap", "exit_specialist_cap", "exit_repeat"):
+                break
+
+        if not skip_terminal_reporter:
+            self._run_dynamic_terminal_reporter(user_prompt, specialists)
+
+        charts_dir = self.run_output_dir / "charts"
+        if charts_dir.exists():
+            self.charts = list(charts_dir.glob("*.png"))
+        else:
+            self.charts = []
+        self.results["dynamic_run_history"] = list(self.run_history_dynamic)
+        self._save_report_to_file()
+        return self.results
+
+    def _run_interactive_supervisor_segment(
+        self,
+        user_prompt: str,
+        specialists: Dict[str, Agent],
+        system_instruction: str,
+        state: SupervisorLoopState,
+        *,
+        step_delay: float,
+        max_specialist_steps: int,
+        max_manager_turns: int,
+        log: Optional[List[str]] = None,
+    ) -> InteractiveSegmentResult:
+        """Inner supervisor loop for one user message (until CHAT, DONE, or guardrail)."""
+        while True:
+            turn = self._dynamic_supervisor_single_turn(
+                user_prompt,
+                specialists,
+                system_instruction,
+                state,
+                step_delay=step_delay,
+                max_specialist_steps=max_specialist_steps,
+                max_manager_turns=max_manager_turns,
+                interactive_chat_breaks=True,
+                log=log,
+            )
+            if turn == "exit_manager_cap":
+                return InteractiveSegmentResult(outcome="session_exit_manager_cap")
+            if turn == "continue":
+                continue
+            return InteractiveSegmentResult(outcome="await_user")
+
+    def run_interactive_session(self, user_prompt: str) -> None:
+        """Stdin loop: follow-up messages, CHAT/DONE/specialist routing. Terminal report: /report or on exit."""
+        print(
+            "\n[INTERACTIVE] Supervisor mode. Commands:  /report  = full markdown report;  exit | quit  = leave.\n"
+        )
+        specialists = create_dynamic_specialist_agents(self.executor)
+        system_instruction = build_manager_system_instruction(self.brief_dict)
+        step_delay = float(os.getenv("DYNAMIC_STEP_DELAY_SECONDS", "2"))
+        max_specialist_steps = int(os.getenv("DYNAMIC_MAX_STEPS", "18"))
+        mgr_cap_raw = os.getenv("INTERACTIVE_MAX_MANAGER_TURNS", "").strip()
+        max_manager_turns = int(mgr_cap_raw) if mgr_cap_raw.isdigit() else 0
+
+        sup_state = SupervisorLoopState(specialist_count=len(self.run_history_dynamic))
+
+        while True:
+            try:
+                line = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n[INTERACTIVE] End of input — exiting.")
+                break
+
+            if not line:
+                continue
+            low = line.lower()
+            if low in ("exit", "quit", "q"):
+                break
+            if low == "/report":
+                self._run_dynamic_terminal_reporter(user_prompt, specialists)
+                self._save_report_to_file()
+                print(f"[REPORT] Saved under {self.run_output_dir}")
+                continue
+
+            self._append_manager_chat_record("message", "user", line)
+
+            seg = self._run_interactive_supervisor_segment(
+                user_prompt,
+                specialists,
+                system_instruction,
+                sup_state,
+                step_delay=step_delay,
+                max_specialist_steps=max_specialist_steps,
+                max_manager_turns=max_manager_turns,
+            )
+            if seg.outcome == "session_exit_manager_cap":
+                return
+
+        rep_existing = str(self.results.get("report", "") or "").strip()
+        if not rep_existing or len(rep_existing) < 80:
+            self._run_dynamic_terminal_reporter(user_prompt, specialists)
+        self._save_report_to_file()
+        print(f"[INTERACTIVE] Session ended. Report: {self.run_output_dir}")
 
 
     def _run_task_with_retry(
@@ -938,24 +1967,44 @@ def create_sample_dataset(path: str):
 
 
 def main():
-    dataset_path = "sample_data.csv"
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+    dataset_path = os.getenv("DATASET_PATH", "sample_data.csv")
+    output_dir = os.getenv("OUTPUT_DIR", "./analysis_results")
+    workflow_mode = os.getenv("WORKFLOW_MODE", "dynamic").strip().lower()
+    user_prompt = os.getenv(
+        "USER_ANALYSIS_PROMPT",
+        "Perform exploratory analysis and preprocessing with clear recommendations.",
+    ).strip()
+    resume = os.getenv("RESUME_RUN_DIR", "").strip()
+
     if not Path(dataset_path).exists():
         print(f"Creating sample dataset: {dataset_path}")
         create_sample_dataset(dataset_path)
 
     workflow = DataAnalysisWorkflow(
         dataset_path=dataset_path,
-        output_dir="./analysis_results",
+        output_dir=output_dir,
+        resume_from=resume or None,
     )
 
-    results = workflow.run_sequential_pipeline()
+    if workflow_mode == "dynamic":
+        workflow.run_dynamic_team_pipeline(user_prompt=user_prompt)
+    else:
+        workflow.run_sequential_pipeline()
+
     report_path = workflow.generate_markdown_report()
 
     print(f"\n{'='*70}")
     print("WORKFLOW COMPLETE")
     print(f"{'='*70}")
     print(f"Report saved to: {report_path}")
-    print(f"Charts saved to: {workflow.output_dir / 'charts'}")
+    print(f"Charts saved to: {workflow.run_output_dir / 'charts'}")
 
     return report_path
 
