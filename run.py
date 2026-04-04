@@ -60,6 +60,11 @@ def main():
         action="store_true",
         help="After dynamic run, exit immediately (skip stdin manager chat and on-demand /report).",
     )
+    cli.add_argument(
+        "--batch-first",
+        action="store_true",
+        help="Run full supervisor batch from USER_ANALYSIS_PROMPT before stdin (legacy). Same as AUTO_RUN_SUPERVISOR=1.",
+    )
     args, _unknown = cli.parse_known_args()
 
     print(f"\n{'='*70}")
@@ -89,6 +94,20 @@ def main():
         "Perform thorough exploratory analysis and preprocessing; highlight data quality issues and modeling recommendations.",
     ).strip()
     resume_run_dir = (args.resume or os.getenv("RESUME_RUN_DIR", "") or "").strip()
+
+    env_interactive_first = os.getenv("INTERACTIVE_FIRST", "1").strip().lower()
+    interactive_first_enabled = env_interactive_first not in ("0", "false", "no", "off")
+    batch_first = bool(args.batch_first) or os.getenv("AUTO_RUN_SUPERVISOR", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    interactive_first = (
+        workflow_mode == "dynamic"
+        and interactive
+        and interactive_first_enabled
+        and not batch_first
+    )
 
     if not dataset_path:
         print("[ERROR] DATASET_PATH not set!")
@@ -121,7 +140,11 @@ def main():
     if resume_run_dir:
         print(f"  Resume: {resume_run_dir}")
     if interactive and workflow_mode == "dynamic":
-        print("  Interactive: enabled (stdin after pipeline; /report, exit)")
+        if interactive_first:
+            print("  Dynamic: interactive-first (stdin sets goal; no auto batch). Set INTERACTIVE_FIRST=0 or AUTO_RUN_SUPERVISOR=1 for batch-first.")
+        else:
+            print("  Dynamic: batch-first then stdin (USER_ANALYSIS_PROMPT drives batch).")
+        print("  Interactive: enabled (stdin; /report, exit)")
     print()
 
     workflow = DataAnalysisWorkflow(
@@ -136,22 +159,44 @@ def main():
             workflow.run_sequential_pipeline()
         else:
             fu = [x for x in (args.follow_ups or []) if str(x).strip()]
-            workflow.run_dynamic_team_pipeline(
-                user_prompt=user_prompt,
-                followup_messages=fu or None,
-                skip_terminal_reporter=bool(interactive),
-            )
-            if interactive:
-                workflow.run_interactive_session(user_prompt=user_prompt)
+            if interactive_first:
+                workflow.run_interactive_session(
+                    user_prompt,
+                    interactive_first=True,
+                    followup_messages=fu or None,
+                )
+            else:
+                workflow.run_dynamic_team_pipeline(
+                    user_prompt=user_prompt,
+                    followup_messages=fu or None,
+                    skip_terminal_reporter=bool(interactive),
+                )
+                if interactive:
+                    workflow.run_interactive_session(
+                        user_prompt,
+                        interactive_first=False,
+                    )
 
-        print("\nGenerating markdown report...")
-        report_path = workflow.generate_markdown_report()
+        auto_md_env = os.getenv("AUTO_MARKDOWN_REPORT", "").strip().lower()
+        if auto_md_env:
+            want_auto_md = auto_md_env in ("1", "true", "yes")
+        else:
+            want_auto_md = not interactive_first
+        rep_body = str(workflow.results.get("report", "") or "").strip()
+        if want_auto_md or len(rep_body) > 80:
+            print("\nGenerating markdown report...")
+            report_path = workflow.generate_markdown_report()
+        else:
+            print(
+                "\n[SKIP] Final markdown pass (interactive-first; use /report in session or set AUTO_MARKDOWN_REPORT=1)."
+            )
+            report_path = workflow.run_output_dir / f"analysis_report_{workflow.run_id}.md"
 
         print(f"\n{'='*70}")
         print("[SUCCESS] ANALYSIS COMPLETE!")
         print(f"{'='*70}")
         print(f"\n[RUN ID] {workflow.run_id}")
-        print("\n[REPORT] Report saved to:")
+        print("\n[REPORT] Report path:")
         print(f"  {Path(report_path).absolute()}\n")
         print("[OUTPUT] Run output directory:")
         print(f"  {workflow.run_output_dir.absolute()}\n")

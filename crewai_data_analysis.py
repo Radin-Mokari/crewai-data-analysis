@@ -130,7 +130,7 @@ dataset_path = r\"\"\"{dataset_path}\"\"\"
 df_raw = _pd.read_csv(dataset_path)
 df_clean = None
 df_features = None
-validation_report = []  # list of findings/messages; agents use .append()
+validation_report = {{}}  # dict: structured checks (string keys); optional notes list via key "messages"
 
 # === CORE MODE METADATA ===
 # These variables provide dynamic column awareness for all agents
@@ -667,6 +667,8 @@ DYNAMIC_CORE_MODE = (
     "1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. "
     "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
     "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
+    "validation_report is a dict (never a list): use string keys for checks; "
+    "validation_report.setdefault('messages', []).append('note') for free-form notes. "
     "4) Output concise code, no conversational text. "
     "5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
 )
@@ -906,7 +908,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             goal="Verify environment, profile df_raw, validate, and produce df_clean using dynamic columns.",
             backstory=(
                 f"{cm} You absorb former pipeline steps: env check, structure summary, quality inspection, "
-                "validation_report population, and cleaning. For time-series data, set TIME_INDEX_OK = True only after "
+                "validation_report population (keep validation_report as a dict; never assign validation_report = []), "
+                "and cleaning. For time-series data, set TIME_INDEX_OK = True only after "
                 "df_clean is sorted by the primary time column. INSPECTOR MODE on errors."
             ),
             llm=llm_medium,
@@ -1089,11 +1092,18 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "Output ONLY valid JSON (no markdown) with keys: next_agent, instruction, rationale, reply_to_user (optional string). "
         "next_agent must be one of: cleaning, feature_engineering, class_imbalance, eda, visualization, statistics, "
         "reporter, CHAT, DONE. "
+        "Respect NARROW user requests: if they ask for only one kind of work (only EDA, only visualization, only statistics, "
+        "only feature engineering, only class_imbalance, only cleaning, only reporter), delegate to that specialist with a "
+        "scoped instruction—do not run a full end-to-end pipeline unless they asked for comprehensive analysis.\n"
+        "If the user asks a question that needs no code execution, use CHAT. "
+        "If df_clean is missing but they asked for downstream work, the system may require cleaning first: use CHAT to briefly "
+        "explain why minimal preparation helps (or what raw-only would imply) before delegating cleaning with a narrow instruction.\n"
         "Use CHAT when you should answer the user conversationally without running a specialist — set reply_to_user to the "
         "full user-visible answer (markdown/plain text); instruction may be empty. "
-        "Use DONE when analysis is sufficient for a final report; you may set reply_to_user for a short closing note.\n"
+        "Use DONE when the user's request for this turn is satisfied or when stopping is appropriate; you may set reply_to_user "
+        "for a short closing note.\n"
         "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
-        "unless the user explicitly asks for an early summary.\n"
+        "unless the user explicitly asks for a write-up or summary.\n"
     )
 
 
@@ -1214,6 +1224,32 @@ class DataAnalysisWorkflow:
         self.results: Dict[str, Any] = {}
         self.charts: List[Path] = []
         self.report_path: Optional[Path] = None
+        # Latest user intent for manager payload (stdin / HTTP); falls back to env batch prompt when empty.
+        self.session_user_goal: str = ""
+        self._dynamic_bootstrapped: bool = False
+
+    def _effective_user_goal(self, fallback: str) -> str:
+        """Prefer session_user_goal (chat lines); else fallback (e.g. USER_ANALYSIS_PROMPT)."""
+        s = (self.session_user_goal or "").strip()
+        return s if s else (fallback or "").strip()
+
+    def _validate_resume_brief_vs_kernel(self) -> None:
+        """Light consistency check after brief compute + resume hydrate."""
+        if not isinstance(self.brief_dict, dict):
+            return
+        sh = self.brief_dict.get("shape")
+        g = self.executor.session_globals
+        dr = g.get("df_raw")
+        if not isinstance(dr, pd.DataFrame) or not isinstance(sh, (list, tuple)) or len(sh) < 2:
+            return
+        try:
+            if int(dr.shape[0]) != int(sh[0]) or int(dr.shape[1]) != int(sh[1]):
+                print(
+                    f"[RESUME WARNING] df_raw shape {tuple(dr.shape)} differs from dataset brief {tuple(sh)}. "
+                    "Use the same DATASET_PATH as when this run was created."
+                )
+        except (TypeError, ValueError):
+            pass
 
     def _append_manager_chat_record(self, kind: str, role: str, content: str, **extra: Any) -> None:
         rec = {
@@ -1243,6 +1279,90 @@ class DataAnalysisWorkflow:
         if self.brief_text:
             return
         self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
+        self._validate_resume_brief_vs_kernel()
+
+    def bootstrap_dynamic_supervisor_session(
+        self,
+        user_prompt: str,
+        followup_messages: Optional[List[str]],
+        *,
+        seed_initial_chat: bool = True,
+    ) -> Dict[str, Agent]:
+        """Brief, session meta, optional initial chat seed. Idempotent; follow-ups still appended if already bootstrapped."""
+        if self._dynamic_bootstrapped:
+            _fus = list(followup_messages or [])
+            _env_fu = os.getenv("USER_FOLLOWUP", "").strip()
+            if _env_fu:
+                _fus.append(_env_fu)
+            for _txt in _fus:
+                t = str(_txt).strip()
+                if t:
+                    self._append_manager_chat_record("message", "user", f"User follow-up:\n{t}")
+            return create_dynamic_specialist_agents(self.executor)
+        if not self.brief_text:
+            self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
+        self._validate_resume_brief_vs_kernel()
+        specialists = create_dynamic_specialist_agents(self.executor)
+        meta = {
+            "schema": 1,
+            "mode": "dynamic_supervisor",
+            "dataset_path": self.dataset_path,
+            "run_id": self.run_id,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        try:
+            self.session_meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+        if seed_initial_chat and not self.manager_chat_records:
+            up = (user_prompt or "").strip()
+            if up:
+                self._append_manager_chat_record(
+                    "message",
+                    "user",
+                    f"Initial user goal:\n{up}\n\nDataset brief:\n{self.brief_text[:8000]}",
+                )
+        _fus = list(followup_messages or [])
+        _env_fu = os.getenv("USER_FOLLOWUP", "").strip()
+        if _env_fu:
+            _fus.append(_env_fu)
+        for _txt in _fus:
+            t = str(_txt).strip()
+            if t:
+                self._append_manager_chat_record("message", "user", f"User follow-up:\n{t}")
+        self._dynamic_bootstrapped = True
+        return specialists
+
+    def run_supervisor_batch_loop(
+        self,
+        user_prompt: str,
+        specialists: Dict[str, Agent],
+    ) -> None:
+        """Supervisor until DONE/cap (no interactive chat breaks). Caller sets session_user_goal if needed."""
+        max_specialist_steps = int(os.getenv("DYNAMIC_MAX_STEPS", "18"))
+        step_delay = float(os.getenv("DYNAMIC_STEP_DELAY_SECONDS", "2"))
+        mgr_cap_raw = os.getenv("INTERACTIVE_MAX_MANAGER_TURNS", "").strip()
+        max_manager_turns = int(mgr_cap_raw) if mgr_cap_raw.isdigit() else 0
+        system_instruction = build_manager_system_instruction(self.brief_dict)
+        sup_state = SupervisorLoopState(specialist_count=len(self.run_history_dynamic))
+        while True:
+            turn = self._dynamic_supervisor_single_turn(
+                user_prompt,
+                specialists,
+                system_instruction,
+                sup_state,
+                step_delay=step_delay,
+                max_specialist_steps=max_specialist_steps,
+                max_manager_turns=max_manager_turns,
+                interactive_chat_breaks=False,
+                log=None,
+            )
+            if turn == "continue":
+                continue
+            if turn == "done":
+                break
+            if turn in ("exit_manager_cap", "exit_specialist_cap", "exit_repeat"):
+                break
 
     def get_interactive_specialists(self) -> Dict[str, Agent]:
         if getattr(self, "_interactive_specialists_cache", None) is None:
@@ -1288,6 +1408,60 @@ class DataAnalysisWorkflow:
         lines.append(f"- TIME_INDEX_OK: {g.get('TIME_INDEX_OK')}")
         return "\n".join(lines) if lines else "(no session facts available)"
 
+    def _extract_crew_text(self, result: Any) -> str:
+        """Best-effort string from Crew/Task output (str() is often too short vs verbose logs)."""
+        if result is None:
+            return ""
+        s = str(result).strip()
+        if len(s) > 200:
+            return s
+        for attr in ("raw", "output", "result", "content"):
+            v = getattr(result, attr, None)
+            if v is not None:
+                t = str(v).strip()
+                if len(t) > len(s):
+                    s = t
+        return s if s else str(result)
+
+    def _best_reporter_step_output(self) -> str:
+        """Longest substantive output from dynamic reporter task keys in self.results."""
+        best = ""
+        for k, v in self.results.items():
+            if not isinstance(k, str) or "_reporter" not in k:
+                continue
+            t = self._extract_crew_text(v).strip()
+            if len(t) > len(best):
+                best = t
+        return best
+
+    def _looks_like_real_report(self, text: str) -> bool:
+        t = (text or "").strip()
+        if len(t) < 80:
+            return False
+        if t.startswith("#") or "Executive Summary" in t[:1200]:
+            return True
+        return len(t) > 500
+
+    def _resolve_report_markdown(self) -> str:
+        """Prefer terminal results['report'] when substantive; else longest reporter step output."""
+        primary = str(self.results.get("report", "") or "").strip()
+        alt = self._best_reporter_step_output()
+        if self._looks_like_real_report(primary) and not _report_text_has_placeholders(primary):
+            return primary
+        if self._looks_like_real_report(alt) and not _report_text_has_placeholders(alt):
+            return alt
+        if len(alt) > len(primary) and len(alt) > 150:
+            return alt
+        return primary or alt
+
+    def _is_fallback_report_text(self, text: str) -> bool:
+        t = (text or "").strip()
+        if "This report was auto-generated from the analysis pipeline results" in t:
+            return True
+        if "No preparation results available" in t and "## Preparation Phase Results" in t:
+            return True
+        return False
+
     def _run_dynamic_terminal_reporter(self, user_prompt: str, specialists: Dict[str, Agent]) -> None:
         """Synthesize markdown report from brief + run history (reuses last reporter specialist output when valid)."""
         hist_summary = format_run_history_digest(
@@ -1331,7 +1505,11 @@ class DataAnalysisWorkflow:
             )
             try:
                 rep_result = rep_task.execute_sync(agent=specialists["reporter"])
-                self.results["report"] = str(rep_result)
+                self.results["report"] = self._extract_crew_text(rep_result)
+                resolved = self._resolve_report_markdown()
+                if resolved != self.results.get("report", ""):
+                    print("[REPORT] Using best reporter output (refined from terminal result).")
+                self.results["report"] = resolved
             except Exception as e:
                 print(f"[REPORT] Error: {e}")
                 self.results["report"] = (
@@ -1376,8 +1554,9 @@ class DataAnalysisWorkflow:
             run_output_dir=self.run_output_dir,
         )
         digest = format_run_history_digest(self.run_history_dynamic)
+        eff_goal = self._effective_user_goal(user_prompt)
         user_payload = (
-            f"user_goal:\n{user_prompt}\n\n"
+            f"user_goal:\n{eff_goal}\n\n"
             f"validate_state:\n{json.dumps(flags)}\n\n"
             f"run_history_digest:\n{digest}\n"
         )
@@ -1470,7 +1649,7 @@ class DataAnalysisWorkflow:
         task = build_specialist_task(
             agent_id=decision.next_agent,
             agents=specialists,
-            user_prompt=user_prompt,
+            user_prompt=eff_goal,
             manager_instruction=decision.instruction,
             use_ts_appendix=use_ts,
             reporter_session_facts=rep_facts,
@@ -1517,7 +1696,6 @@ class DataAnalysisWorkflow:
         DYNAMIC_MAX_STEPS caps **specialist** Crew executions only; CHAT turns do not consume it.
         """
         max_specialist_steps = int(os.getenv("DYNAMIC_MAX_STEPS", str(max_steps)))
-        step_delay = float(os.getenv("DYNAMIC_STEP_DELAY_SECONDS", "2"))
         mgr_cap_raw = os.getenv("INTERACTIVE_MAX_MANAGER_TURNS", "").strip()
         max_manager_turns = int(mgr_cap_raw) if mgr_cap_raw.isdigit() else 0
 
@@ -1531,61 +1709,16 @@ class DataAnalysisWorkflow:
             print(f"Max manager invocations (total): {max_manager_turns}")
         print(f"{'='*70}\n")
 
-        self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
-        specialists = create_dynamic_specialist_agents(self.executor)
-
-        meta = {
-            "schema": 1,
-            "mode": "dynamic_supervisor",
-            "dataset_path": self.dataset_path,
-            "run_id": self.run_id,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        try:
-            self.session_meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        except OSError:
-            pass
-
-        if not self.manager_chat_records:
-            self._append_manager_chat_record(
-                "message",
-                "user",
-                f"Initial user goal:\n{user_prompt}\n\nDataset brief:\n{self.brief_text[:8000]}",
-            )
-
-        _fus = list(followup_messages or [])
-        _env_fu = os.getenv("USER_FOLLOWUP", "").strip()
-        if _env_fu:
-            _fus.append(_env_fu)
-        for _txt in _fus:
-            t = str(_txt).strip()
-            if t:
-                self._append_manager_chat_record("message", "user", f"User follow-up:\n{t}")
-
-        system_instruction = build_manager_system_instruction(self.brief_dict)
-        sup_state = SupervisorLoopState(specialist_count=len(self.run_history_dynamic))
-
-        while True:
-            turn = self._dynamic_supervisor_single_turn(
-                user_prompt,
-                specialists,
-                system_instruction,
-                sup_state,
-                step_delay=step_delay,
-                max_specialist_steps=max_specialist_steps,
-                max_manager_turns=max_manager_turns,
-                interactive_chat_breaks=False,
-                log=None,
-            )
-            if turn == "continue":
-                continue
-            if turn == "done":
-                break
-            if turn in ("exit_manager_cap", "exit_specialist_cap", "exit_repeat"):
-                break
+        self.session_user_goal = (user_prompt or "").strip()
+        specialists = self.bootstrap_dynamic_supervisor_session(
+            user_prompt,
+            followup_messages,
+            seed_initial_chat=True,
+        )
+        self.run_supervisor_batch_loop(user_prompt, specialists)
 
         if not skip_terminal_reporter:
-            self._run_dynamic_terminal_reporter(user_prompt, specialists)
+            self._run_dynamic_terminal_reporter(self._effective_user_goal(user_prompt), specialists)
 
         charts_dir = self.run_output_dir / "charts"
         if charts_dir.exists():
@@ -1627,8 +1760,25 @@ class DataAnalysisWorkflow:
                 continue
             return InteractiveSegmentResult(outcome="await_user")
 
-    def run_interactive_session(self, user_prompt: str) -> None:
+    def run_interactive_session(
+        self,
+        user_prompt: str,
+        *,
+        interactive_first: bool = False,
+        followup_messages: Optional[List[str]] = None,
+    ) -> None:
         """Stdin loop: follow-up messages, CHAT/DONE/specialist routing. Terminal report: /report or on exit."""
+        if not self._dynamic_bootstrapped:
+            self.bootstrap_dynamic_supervisor_session(
+                "",
+                followup_messages,
+                seed_initial_chat=False,
+            )
+        if interactive_first:
+            print(
+                "\n[INTERACTIVE] Chat-first mode: your first line sets the analysis goal. "
+                "Narrow asks (e.g. only EDA or only plots) are respected when possible.\n"
+            )
         print(
             "\n[INTERACTIVE] Supervisor mode. Commands:  /report  = full markdown report;  exit | quit  = leave.\n"
         )
@@ -1654,11 +1804,12 @@ class DataAnalysisWorkflow:
             if low in ("exit", "quit", "q"):
                 break
             if low == "/report":
-                self._run_dynamic_terminal_reporter(user_prompt, specialists)
+                self._run_dynamic_terminal_reporter(self._effective_user_goal(user_prompt), specialists)
                 self._save_report_to_file()
                 print(f"[REPORT] Saved under {self.run_output_dir}")
                 continue
 
+            self.session_user_goal = line
             self._append_manager_chat_record("message", "user", line)
 
             seg = self._run_interactive_supervisor_segment(
@@ -1673,9 +1824,10 @@ class DataAnalysisWorkflow:
             if seg.outcome == "session_exit_manager_cap":
                 return
 
-        rep_existing = str(self.results.get("report", "") or "").strip()
-        if not rep_existing or len(rep_existing) < 80:
-            self._run_dynamic_terminal_reporter(user_prompt, specialists)
+        if not interactive_first:
+            rep_existing = str(self.results.get("report", "") or "").strip()
+            if not rep_existing or len(rep_existing) < 80:
+                self._run_dynamic_terminal_reporter(self._effective_user_goal(user_prompt), specialists)
         self._save_report_to_file()
         print(f"[INTERACTIVE] Session ended. Report: {self.run_output_dir}")
 
@@ -1842,7 +1994,8 @@ class DataAnalysisWorkflow:
             print("\n[PHASE 3] Starting report generation...")
             print(f"[TIME] {datetime.now().strftime('%H:%M:%S')} - Starting report task...")
             report_result = report_task.execute_sync(agent=self.agents["report_generator"])
-            self.results["report"] = str(report_result)
+            self.results["report"] = self._extract_crew_text(report_result)
+            self.results["report"] = self._resolve_report_markdown()
             print("\n[PHASE 3] [OK] Report generation completed")
         except Exception as e:
             print(f"\n[PHASE 3] [ERROR] Error in report generation: {e}")
@@ -1869,22 +2022,43 @@ class DataAnalysisWorkflow:
             "",
             "This report was auto-generated from the analysis pipeline results.",
             "",
-            "## Preparation Phase Results",
-            "",
-            "```",
-            self.results.get("preparation", "No preparation results available.")[:2000],
-            "```",
-            "",
-            "## Analysis Phase Results", 
-            "",
-            "```",
-            self.results.get("analysis", "No analysis results available.")[:2000],
-            "```",
-            "",
-            "## Charts Generated",
-            "",
         ]
-        
+        if self.run_history_dynamic:
+            digest = format_run_history_digest(
+                self.run_history_dynamic,
+                last_n=30,
+                max_instruction_chars=400,
+                max_excerpt_chars=2500,
+            )
+            report_lines.extend(
+                [
+                    "## Dynamic workflow (step digest)",
+                    "",
+                    "```",
+                    digest[:12000],
+                    "```",
+                    "",
+                ]
+            )
+        report_lines.extend(
+            [
+                "## Preparation Phase Results",
+                "",
+                "```",
+                str(self.results.get("preparation", "No preparation results available."))[:2000],
+                "```",
+                "",
+                "## Analysis Phase Results",
+                "",
+                "```",
+                str(self.results.get("analysis", "No analysis results available."))[:2000],
+                "```",
+                "",
+                "## Charts Generated",
+                "",
+            ]
+        )
+
         charts_dir = self.run_output_dir / "charts"
         if charts_dir.exists():
             for chart in charts_dir.glob("*.png"):
@@ -1896,10 +2070,16 @@ class DataAnalysisWorkflow:
     
     def _save_report_to_file(self):
         """Save report to run directory."""
-        report_md = self.results.get("report", "")
-        if not report_md or report_md.startswith("Error:"):
+        report_md = self._resolve_report_markdown()
+        if not report_md.strip():
             report_md = self._generate_fallback_report()
-        
+        elif report_md.startswith("Error:"):
+            pass
+        elif not self._looks_like_real_report(report_md) and len(report_md.strip()) < 400:
+            fb = self._generate_fallback_report()
+            if len(fb.strip()) > len(report_md.strip()) + 80:
+                report_md = fb
+
         self.report_path = self.run_output_dir / f"analysis_report_{self.run_id}.md"
         try:
             self.report_path.write_text(report_md, encoding="utf-8")
@@ -1910,18 +2090,46 @@ class DataAnalysisWorkflow:
     def generate_markdown_report(self) -> str:
         """Generate and save the markdown report."""
         report_path = self.report_path or (self.run_output_dir / f"analysis_report_{self.run_id}.md")
-        
-        if report_path.exists():
-            print(f"\n{'='*70}")
-            print("[OK] MARKDOWN REPORT ALREADY GENERATED")
-            print(f"Location: {report_path}")
-            print(f"Run directory: {self.run_output_dir}")
-            print(f"{'='*70}\n")
-            return str(report_path)
-        
-        report_md = self.results.get("report", "")
-        if not report_md or report_md.startswith("Error:"):
+
+        report_md = self._resolve_report_markdown()
+        if not report_md.strip():
             report_md = self._generate_fallback_report()
+        elif report_md.startswith("Error:"):
+            pass
+        elif not self._looks_like_real_report(report_md) and len(report_md.strip()) < 400:
+            fb = self._generate_fallback_report()
+            if len(fb.strip()) > len(report_md.strip()) + 80:
+                report_md = fb
+
+        if report_path.exists():
+            try:
+                existing = report_path.read_text(encoding="utf-8")
+            except OSError:
+                existing = ""
+            if report_md.strip() and (
+                self._is_fallback_report_text(existing)
+                or len(existing.strip()) < 40
+            ):
+                try:
+                    report_path.write_text(report_md, encoding="utf-8")
+                    self.report_path = report_path
+                    print(f"\n{'='*70}")
+                    print("[OK] MARKDOWN REPORT UPDATED (replaced placeholder or empty file)")
+                    print(f"Location: {report_path}")
+                    print(f"Run directory: {self.run_output_dir}")
+                    print(f"{'='*70}\n")
+                except Exception as e:
+                    print(f"\n{'='*70}")
+                    print(f"[ERROR] FAILED TO SAVE REPORT: {e}")
+                    print(f"{'='*70}\n")
+                return str(report_path)
+            if existing.strip() and not self._is_fallback_report_text(existing):
+                print(f"\n{'='*70}")
+                print("[OK] MARKDOWN REPORT ALREADY GENERATED")
+                print(f"Location: {report_path}")
+                print(f"Run directory: {self.run_output_dir}")
+                print(f"{'='*70}\n")
+                return str(report_path)
 
         try:
             report_path.write_text(report_md, encoding="utf-8")

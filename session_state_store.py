@@ -97,7 +97,7 @@ def save_kernel_snapshot(executor: Any, run_dir: Path) -> None:
         "validation_report": (
             g.get("validation_report")
             if isinstance(g.get("validation_report"), (dict, list))
-            else []
+            else {}
         ),
     }
     for k in _META_LIST_KEYS:
@@ -168,7 +168,7 @@ def try_load_kernel_snapshot(executor: Any, run_dir: Path) -> bool:
         if isinstance(vr, (dict, list)):
             g["validation_report"] = vr
         elif vr is not None:
-            g["validation_report"] = []
+            g["validation_report"] = {}
 
         dp = meta.get("dataset_path")
         if isinstance(dp, str) and dp:

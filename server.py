@@ -78,6 +78,9 @@ def _run_chat_sync(message: str, user_prompt: str) -> Dict[str, Any]:
     wf = _workflow
     assert wf is not None
     wf.ensure_dynamic_brief()
+    if not wf._dynamic_bootstrapped:
+        wf.bootstrap_dynamic_supervisor_session("", None, seed_initial_chat=False)
+    wf.session_user_goal = message.strip()
     if not getattr(wf, "_http_iv_ready", False):
         wf._http_supervisor_state = SupervisorLoopState(specialist_count=len(wf.run_history_dynamic))
         wf._http_iv_ready = True
@@ -107,11 +110,11 @@ async def chat(body: ChatIn):
     async with _chat_lock:
         if _workflow is None:
             raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
-        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
+        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
         if not up:
             raise HTTPException(
                 status_code=400,
-                detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
+                detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
             )
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
@@ -129,6 +132,7 @@ def _run_pipeline_sync(user_prompt: str, follow_ups: Optional[List[str]]) -> Dic
     wf = _workflow
     assert wf is not None
     wf.ensure_dynamic_brief()
+    wf.session_user_goal = (user_prompt or "").strip()
     wf.run_dynamic_team_pipeline(
         user_prompt=user_prompt,
         followup_messages=follow_ups,
@@ -164,7 +168,8 @@ def _report_sync() -> Dict[str, Any]:
     assert wf is not None
     wf.ensure_dynamic_brief()
     specialists = wf.get_interactive_specialists()
-    up = (os.getenv("USER_ANALYSIS_PROMPT") or "").strip() or "Analysis report"
+    fallback = (os.getenv("USER_ANALYSIS_PROMPT") or "").strip() or "Analysis report"
+    up = wf._effective_user_goal(fallback)
     wf._run_dynamic_terminal_reporter(up, specialists)
     wf._save_report_to_file()
     return {"ok": True, "run_dir": str(wf.run_output_dir)}

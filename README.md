@@ -11,7 +11,7 @@ A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic s
 - **`chat_turn` rows**: Extra JSONL entries for CHAT replies (omitted from the manager prompt block to avoid duplicating assistant JSON).
 - **Deterministic dataset brief**: `dataset_brief.txt` per run (time-series heuristics when applicable).
 - **Kernel snapshots**: After each specialist step, optional `kernel_snapshot/` (Parquet + `meta.json`) for resume; `SESSION_SNAPSHOT=0` disables. Requires **pyarrow** (see `requirements.txt`).
-- **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** after the batch run so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`). Use `--no-interactive` or `INTERACTIVE_SESSION=0` to exit immediately after the report. **Sequential** mode does not use this loop.
+- **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`). **Interactive-first** (default): no automatic batch before stdin — your first line sets the goal (narrow asks like “only EDA” or “only plots” are routed by the supervisor). **Batch-first**: set `AUTO_RUN_SUPERVISOR=1` or `--batch-first` to run a full supervisor batch from `USER_ANALYSIS_PROMPT` before stdin (legacy). Use `--no-interactive` or `INTERACTIVE_SESSION=0` to skip stdin entirely. **Sequential** mode does not use this loop.
 - **Local HTTP API** (optional): `server.py` + Uvicorn — same rules as CLI; see [Usage](#usage).
 - **Core mode prompting**: Dynamic columns (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`); no hardcoded column names.
 - **Codified prompting**: Analysis agents plan (pseudocode) before executing; inspector-style retries on errors.
@@ -86,6 +86,13 @@ USER_ANALYSIS_PROMPT=Your analysis goals in plain language
 # Interactive after dynamic run: unset = on for dynamic; 0 = off; 1 = on
 # INTERACTIVE_SESSION=
 
+# Interactive-first (default 1): stdin sets goal before any batch. Set 0 for batch-from-env then stdin.
+# INTERACTIVE_FIRST=1
+# Batch-first: run full supervisor from USER_ANALYSIS_PROMPT before stdin (same as --batch-first)
+# AUTO_RUN_SUPERVISOR=0
+# After interactive-first, skip final generate_markdown_report unless /report filled content or set:
+# AUTO_MARKDOWN_REPORT=0
+
 # Optional: AgentOps monitoring
 # AGENTOPS_API_KEY=your-agentops-api-key-here
 ```
@@ -103,7 +110,7 @@ USER_ANALYSIS_PROMPT=Your analysis goals in plain language
 python run.py
 ```
 
-**Dynamic mode (default):** runs the supervisor batch, then **by default** opens the **interactive** `>` prompt (same kernel). **`--no-interactive`** or **`INTERACTIVE_SESSION=0`** skips that and exits after the final report step.
+**Dynamic mode (default):** **Interactive-first** — opens the `>` prompt immediately; your first line is the analysis goal (no automatic batch from `USER_ANALYSIS_PROMPT`). For **batch-first** (full run from env, then stdin): `python run.py --batch-first` or `AUTO_RUN_SUPERVISOR=1`, or disable interactive-first with `INTERACTIVE_FIRST=0`. **`--no-interactive`** or **`INTERACTIVE_SESSION=0`** runs one non-interactive batch (when batch-first / not interactive-first) or exits after setup.
 
 CLI overrides (optional):
 
@@ -111,6 +118,7 @@ CLI overrides (optional):
 python run.py --workflow-mode dynamic --resume ./analysis_results/run_20260101_120000 --follow-up "Emphasize outliers in price"
 python run.py --no-interactive
 python run.py --interactive
+python run.py --batch-first
 ```
 
 **Interactive commands:** `/report` (regenerate full markdown report), `exit` / `quit` / `q`. `CHAT` supervisor turns do not consume `DYNAMIC_MAX_STEPS` (only specialist Crew runs do).
@@ -125,7 +133,7 @@ uvicorn server:app --host 127.0.0.1 --port 8765
 
 - `GET /health` — liveness and `run_id`
 - `POST /pipeline` — one dynamic batch (`skip_terminal_reporter`); resets HTTP interactive state for a fresh chat session
-- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (else `USER_ANALYSIS_PROMPT`)
+- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text)
 - `POST /report` — terminal-style reporter + save report
 - `POST /reset` — rebuild workflow; optional `{"resume_run_dir": "..."}`
 
