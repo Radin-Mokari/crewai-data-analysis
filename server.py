@@ -8,16 +8,18 @@ Requires: DATASET_PATH, GEMINI_API_KEY (see .env.example).
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import queue
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
@@ -151,7 +153,15 @@ class ChatIn(BaseModel):
     user_prompt: Optional[str] = None
 
 
-def _run_chat_sync(message: str, user_prompt: str) -> Dict[str, Any]:
+def _sse_data_line(obj: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+
+def _run_chat_sync(
+    message: str,
+    user_prompt: str,
+    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
     from crewai_data_analysis import SupervisorLoopState, build_manager_system_instruction
 
     wf = _workflow
@@ -185,6 +195,7 @@ def _run_chat_sync(message: str, user_prompt: str) -> Dict[str, Any]:
         max_specialist_steps=max_specialist_steps,
         max_manager_turns=max_manager_turns,
         log=log,
+        emit=emit,
     )
     new_entries = wf.run_history_dynamic[n_hist:]
     specialist_steps: List[Dict[str, str]] = []
@@ -228,12 +239,60 @@ async def chat(body: ChatIn):
         )
 
 
+@app.post("/chat/stream")
+async def chat_stream(body: ChatIn):
+    """Server-Sent Events: supervisor events, then `final` with same JSON shape as POST /chat."""
+    async with _chat_lock:
+        if _workflow is None:
+            raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
+        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
+        if not up:
+            raise HTTPException(
+                status_code=400,
+                detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
+            )
+        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+
+        def work() -> None:
+            try:
+                result = _run_chat_sync(body.message.strip(), up, emit=q.put)
+                q.put({"type": "final", **result})
+            except Exception as e:
+                q.put({"type": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        async def event_gen():
+            asyncio.get_running_loop().run_in_executor(None, work)
+            while True:
+                item = await asyncio.to_thread(q.get)
+                if item is None:
+                    break
+                yield _sse_data_line(item)
+
+        return StreamingResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+
 class PipelineIn(BaseModel):
     user_prompt: Optional[str] = None
     follow_ups: Optional[List[str]] = None
 
 
-def _run_pipeline_sync(user_prompt: str, follow_ups: Optional[List[str]]) -> Dict[str, Any]:
+def _run_pipeline_sync(
+    user_prompt: str,
+    follow_ups: Optional[List[str]],
+    *,
+    emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+    log: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     wf = _workflow
     assert wf is not None
     wf.ensure_dynamic_brief()
@@ -242,6 +301,8 @@ def _run_pipeline_sync(user_prompt: str, follow_ups: Optional[List[str]]) -> Dic
         user_prompt=user_prompt,
         followup_messages=follow_ups,
         skip_terminal_reporter=True,
+        emit=emit,
+        log=log,
     )
     wf._http_iv_ready = False
     wf._http_supervisor_state = None
@@ -265,6 +326,57 @@ async def run_pipeline(body: PipelineIn):
         return await loop.run_in_executor(
             None,
             lambda: _run_pipeline_sync(up, body.follow_ups),
+        )
+
+
+@app.post("/pipeline/stream")
+async def run_pipeline_stream(body: PipelineIn):
+    """SSE: supervisor events for full batch, then `final` with ok, run_id, specialist_steps, lines."""
+    async with _chat_lock:
+        if _workflow is None:
+            raise HTTPException(status_code=503, detail="Workflow not initialized")
+        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
+        if not up:
+            raise HTTPException(
+                status_code=400,
+                detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
+            )
+        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+        log_lines: List[str] = []
+
+        def work() -> None:
+            try:
+                result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
+                q.put(
+                    {
+                        "type": "final",
+                        "ok": result["ok"],
+                        "run_id": result["run_id"],
+                        "specialist_steps": result["specialist_steps"],
+                        "lines": list(log_lines),
+                    }
+                )
+            except Exception as e:
+                q.put({"type": "error", "message": str(e)})
+            finally:
+                q.put(None)
+
+        async def event_gen():
+            asyncio.get_running_loop().run_in_executor(None, work)
+            while True:
+                item = await asyncio.to_thread(q.get)
+                if item is None:
+                    break
+                yield _sse_data_line(item)
+
+        return StreamingResponse(
+            event_gen(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
 

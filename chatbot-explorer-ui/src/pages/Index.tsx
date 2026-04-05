@@ -8,12 +8,14 @@ import { Button } from "@/components/ui/button";
 import {
   ApiError,
   getHealth,
-  postChat,
-  postPipeline,
+  postChatStream,
+  postPipelineStream,
   postReport,
   resolveArtifactUrl,
   type HealthResponse,
+  type SupervisorStreamEvent,
 } from "@/lib/api";
+import AgentChainPanel from "@/components/AgentChainPanel";
 import { formatChatReply } from "@/lib/formatChatReply";
 import { prepareMarkdownForChat, runIdFromRunDir } from "@/lib/markdownDisplay";
 
@@ -22,6 +24,7 @@ interface Message {
   content: string;
   role: "user" | "bot";
   chipLabel?: string;
+  chain?: SupervisorStreamEvent[];
 }
 
 const WELCOME: Message = {
@@ -62,6 +65,10 @@ const Index = () => {
   const [healthLoadError, setHealthLoadError] = useState<string | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [pipelineLoading, setPipelineLoading] = useState(false);
+  /** Live SSE events for the in-flight supervisor run (chat or full batch). */
+  const [liveChain, setLiveChain] = useState<SupervisorStreamEvent[]>([]);
+  const [supervisorStreamOpen, setSupervisorStreamOpen] = useState(false);
+  const chainAccRef = useRef<SupervisorStreamEvent[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
@@ -92,7 +99,7 @@ const Index = () => {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, liveChain, supervisorStreamOpen]);
 
   const appendMessages = useCallback((sessionId: string, newMsgs: Message[]) => {
     setMessagesMap((prev) => ({
@@ -169,16 +176,26 @@ const Index = () => {
       }));
 
       setChatLoading(true);
+      setSupervisorStreamOpen(true);
+      chainAccRef.current = [];
+      setLiveChain([]);
       try {
-        const data = await postChat({
-          message: apiMessage,
-          user_prompt: lockedGoal,
-        });
+        const data = await postChatStream(
+          {
+            message: apiMessage,
+            user_prompt: lockedGoal,
+          },
+          (evt) => {
+            chainAccRef.current.push(evt);
+            setLiveChain([...chainAccRef.current]);
+          },
+        );
         appendMessages(sid, [
           {
             id: nextId.current++,
             role: "bot",
             content: formatChatReply(data, resolveArtifactUrl),
+            chain: [...chainAccRef.current],
           },
         ]);
       } catch (e) {
@@ -193,6 +210,8 @@ const Index = () => {
         ]);
       } finally {
         setChatLoading(false);
+        setSupervisorStreamOpen(false);
+        setLiveChain([]);
       }
     },
     [activeSessionId, appendMessages, backendOk, health, sessionGoals],
@@ -222,10 +241,19 @@ const Index = () => {
       },
     ]);
     setPipelineLoading(true);
+    setSupervisorStreamOpen(true);
+    chainAccRef.current = [];
+    setLiveChain([]);
     try {
-      const data = await postPipeline({
-        user_prompt: sessionGoal || undefined,
-      });
+      const data = await postPipelineStream(
+        {
+          user_prompt: sessionGoal || undefined,
+        },
+        (evt) => {
+          chainAccRef.current.push(evt);
+          setLiveChain([...chainAccRef.current]);
+        },
+      );
       appendMessages(sid, [
         {
           id: nextId.current++,
@@ -235,6 +263,7 @@ const Index = () => {
             `- Specialist steps executed: **${data.specialist_steps}**\n` +
             `- run_id: \`${data.run_id}\`\n\n` +
             `_HTTP chat state was reset on the server. Your next normal message starts a new supervisor loop on the same kernel._`,
+          chain: [...chainAccRef.current],
         },
       ]);
       toast.success("Full batch complete");
@@ -256,6 +285,8 @@ const Index = () => {
       ]);
     } finally {
       setPipelineLoading(false);
+      setSupervisorStreamOpen(false);
+      setLiveChain([]);
     }
   }, [activeSessionId, appendMessages, backendOk, sessionGoals]);
 
@@ -376,8 +407,13 @@ const Index = () => {
                 role={m.role}
                 chipLabel={m.chipLabel}
                 wide={m.role === "bot"}
+                chain={m.chain}
               />
             ))}
+            {/* Live supervisor steps belong after the latest user turn (same as Cursor-style streaming). */}
+            {supervisorStreamOpen && (
+              <AgentChainPanel events={liveChain} loading={chatLoading || pipelineLoading} defaultOpen />
+            )}
           </div>
         </div>
 

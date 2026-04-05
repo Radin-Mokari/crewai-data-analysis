@@ -3,6 +3,8 @@
  * Override with VITE_API_BASE_URL (no trailing slash), e.g. http://127.0.0.1:8765
  */
 
+import { parseSseBuffer } from "@/lib/sseParse";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -58,6 +60,27 @@ export type PipelineResponse = {
   ok: boolean;
   run_id: string;
   specialist_steps: number;
+};
+
+/** SSE payloads from supervisor (before `final`). */
+export type SupervisorStreamEvent =
+  | {
+      type: "manager_decision";
+      next_agent: string;
+      instruction: string;
+      rationale?: string;
+      reply_to_user?: string | null;
+    }
+  | { type: "specialist_start"; step: number; agent: string }
+  | { type: "specialist_complete"; step: number; agent: string; excerpt: string }
+  | { type: "manager_message"; text: string }
+  | { type: "guardrail"; message: string };
+
+export type PipelineStreamFinal = {
+  ok: boolean;
+  run_id: string;
+  specialist_steps: number;
+  lines: string[];
 };
 
 function apiBase(): string {
@@ -155,4 +178,100 @@ export async function postPipeline(body?: {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+async function readSsePost(
+  path: string,
+  jsonBody: Record<string, unknown>,
+  onEvent: (obj: Record<string, unknown>) => void,
+): Promise<Record<string, unknown>> {
+  const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jsonBody),
+  });
+  if (!res.ok) {
+    throw new ApiError(await parseErrorDetail(res), res.status);
+  }
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new ApiError("No response body", 500);
+  }
+  const decoder = new TextDecoder();
+  let buf = "";
+  let finalPayload: Record<string, unknown> | null = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    buf += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+    const { events, rest } = parseSseBuffer(buf);
+    buf = rest;
+    for (const raw of events) {
+      if (!raw || typeof raw !== "object") continue;
+      const obj = raw as Record<string, unknown>;
+      const t = obj.type;
+      if (t === "final") {
+        finalPayload = obj;
+      } else if (t === "error") {
+        throw new ApiError(String(obj.message ?? "Stream error"), 500);
+      } else {
+        onEvent(obj);
+      }
+    }
+    if (done) break;
+  }
+  const { events: tailEvents } = parseSseBuffer(buf + "\n\n");
+  for (const raw of tailEvents) {
+    if (!raw || typeof raw !== "object") continue;
+    const obj = raw as Record<string, unknown>;
+    const t = obj.type;
+    if (t === "final") {
+      finalPayload = obj;
+    } else if (t === "error") {
+      throw new ApiError(String(obj.message ?? "Stream error"), 500);
+    } else {
+      onEvent(obj);
+    }
+  }
+  if (!finalPayload) {
+    throw new ApiError("Stream ended without final event", 500);
+  }
+  return finalPayload;
+}
+
+/** POST /chat/stream — SSE; `onEvent` receives supervisor events; resolves with same shape as POST /chat (plus `type` on final). */
+export async function postChatStream(
+  body: { message: string; user_prompt?: string | null },
+  onEvent: (evt: SupervisorStreamEvent) => void,
+): Promise<ChatResponse> {
+  const payload: Record<string, unknown> = {
+    message: body.message,
+  };
+  if (body.user_prompt != null && body.user_prompt !== "") {
+    payload.user_prompt = body.user_prompt;
+  }
+  const fin = await readSsePost("/chat/stream", payload, (obj) => {
+    onEvent(obj as unknown as SupervisorStreamEvent);
+  });
+  const { type: _t, ...rest } = fin;
+  return rest as unknown as ChatResponse;
+}
+
+/** POST /pipeline/stream — SSE for full batch; resolves when pipeline completes. */
+export async function postPipelineStream(
+  body: { user_prompt?: string | null; follow_ups?: string[] },
+  onEvent: (evt: SupervisorStreamEvent) => void,
+): Promise<PipelineStreamFinal> {
+  const payload: Record<string, unknown> = {};
+  if (body.user_prompt != null && String(body.user_prompt).trim() !== "") {
+    payload.user_prompt = String(body.user_prompt).trim();
+  }
+  if (body.follow_ups?.length) {
+    payload.follow_ups = body.follow_ups.filter((s) => String(s).trim());
+  }
+  const fin = await readSsePost("/pipeline/stream", payload, (obj) => {
+    onEvent(obj as unknown as SupervisorStreamEvent);
+  });
+  const { type: _t, ...rest } = fin;
+  return rest as unknown as PipelineStreamFinal;
 }

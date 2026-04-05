@@ -7,7 +7,7 @@ import re
 import json
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Literal, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 
@@ -1337,6 +1337,9 @@ class DataAnalysisWorkflow:
         self,
         user_prompt: str,
         specialists: Dict[str, Agent],
+        *,
+        log: Optional[List[str]] = None,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         """Supervisor until DONE/cap (no interactive chat breaks). Caller sets session_user_goal if needed."""
         max_specialist_steps = int(os.getenv("DYNAMIC_MAX_STEPS", "18"))
@@ -1355,7 +1358,8 @@ class DataAnalysisWorkflow:
                 max_specialist_steps=max_specialist_steps,
                 max_manager_turns=max_manager_turns,
                 interactive_chat_breaks=False,
-                log=None,
+                log=log,
+                emit=emit,
             )
             if turn == "continue":
                 continue
@@ -1528,8 +1532,12 @@ class DataAnalysisWorkflow:
         max_manager_turns: int,
         interactive_chat_breaks: bool,
         log: Optional[List[str]] = None,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> SupervisorSingleTurnOutcome:
         """One manager JSON decision: CHAT, DONE, guardrail stop, or one specialist Crew run."""
+
+        excerpt_cap = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "4000"))
+        instr_cap = min(8000, excerpt_cap * 2)
 
         def _out(s: str) -> None:
             if log is not None:
@@ -1537,12 +1545,20 @@ class DataAnalysisWorkflow:
             else:
                 print(s)
 
+        def _emit(evt: Dict[str, Any]) -> None:
+            if emit is not None:
+                emit(evt)
+
         state.manager_invocations += 1
         if max_manager_turns > 0 and state.manager_invocations > max_manager_turns:
             if interactive_chat_breaks:
-                _out("[GUARDRAIL] INTERACTIVE_MAX_MANAGER_TURNS exceeded — stopping interactive loop.")
+                msg = "[GUARDRAIL] INTERACTIVE_MAX_MANAGER_TURNS exceeded — stopping interactive loop."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             else:
-                _out("[GUARDRAIL] Stopping: INTERACTIVE_MAX_MANAGER_TURNS exceeded.")
+                msg = "[GUARDRAIL] Stopping: INTERACTIVE_MAX_MANAGER_TURNS exceeded."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             return "exit_manager_cap"
 
         flags = self.executor.validate_state()
@@ -1598,16 +1614,32 @@ class DataAnalysisWorkflow:
 
         self._append_manager_chat_record("message", "assistant", decision.model_dump_json())
 
+        _emit(
+            {
+                "type": "manager_decision",
+                "next_agent": decision.next_agent,
+                "instruction": (decision.instruction or "")[:instr_cap],
+                "rationale": (decision.rationale or "")[:2000],
+                "reply_to_user": (
+                    (decision.reply_to_user or "")[:instr_cap] if decision.reply_to_user else None
+                ),
+            }
+        )
+
         if decision.next_agent == "DONE":
             note = (decision.reply_to_user or "").strip()
             if note:
-                _out(f"\n[MANAGER]\n{note}\n")
+                block = f"\n[MANAGER]\n{note}\n"
+                _out(block)
+                _emit({"type": "manager_message", "text": block.strip()})
             return "break_interactive" if interactive_chat_breaks else "done"
 
         if decision.next_agent == "CHAT":
             reply = (decision.reply_to_user or "").strip() or (decision.rationale or "").strip()
             if reply:
-                _out(f"\n[MANAGER]\n{reply}\n")
+                block = f"\n[MANAGER]\n{reply}\n"
+                _out(block)
+                _emit({"type": "manager_message", "text": block.strip()})
                 self._append_manager_chat_record(
                     "chat_turn",
                     "assistant",
@@ -1621,9 +1653,13 @@ class DataAnalysisWorkflow:
 
         if state.specialist_count >= max_specialist_steps:
             if interactive_chat_breaks:
-                _out("[GUARDRAIL] DYNAMIC_MAX_STEPS (specialist runs) reached — type /report or exit.")
+                msg = "[GUARDRAIL] DYNAMIC_MAX_STEPS (specialist runs) reached — type /report or exit."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             else:
-                _out("[GUARDRAIL] Stopping: DYNAMIC_MAX_STEPS (specialist runs) reached.")
+                msg = "[GUARDRAIL] Stopping: DYNAMIC_MAX_STEPS (specialist runs) reached."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             return "exit_specialist_cap"
 
         if decision.next_agent == state.last_agent:
@@ -1633,9 +1669,13 @@ class DataAnalysisWorkflow:
         state.last_agent = decision.next_agent
         if state.repeat_streak >= 5:
             if interactive_chat_breaks:
-                _out("[GUARDRAIL] Same agent repeated — stopping this turn.")
+                msg = "[GUARDRAIL] Same agent repeated — stopping this turn."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             else:
-                _out("[GUARDRAIL] Stopping: same agent repeated without progress.")
+                msg = "[GUARDRAIL] Stopping: same agent repeated without progress."
+                _out(msg)
+                _emit({"type": "guardrail", "message": msg})
             return "exit_repeat"
 
         state.specialist_count += 1
@@ -1656,6 +1696,7 @@ class DataAnalysisWorkflow:
             reporter_run_history=rep_hist,
         )
         task_key = f"dynamic_step_{step}_{decision.next_agent}"
+        _emit({"type": "specialist_start", "step": step, "agent": decision.next_agent})
         result = self._run_task_with_retry(
             agent=specialists[decision.next_agent],
             task=task,
@@ -1663,6 +1704,14 @@ class DataAnalysisWorkflow:
             extra_inputs={},
         )
         excerpt = str(result)[:4500] if result is not None else ""
+        _emit(
+            {
+                "type": "specialist_complete",
+                "step": step,
+                "agent": decision.next_agent,
+                "excerpt": excerpt[:excerpt_cap],
+            }
+        )
         post_flags = self.executor.validate_state()
         self.run_history_dynamic.append(
             {
@@ -1690,6 +1739,8 @@ class DataAnalysisWorkflow:
         followup_messages: Optional[List[str]] = None,
         *,
         skip_terminal_reporter: bool = False,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
+        log: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Supervisor loop: manager JSON routing + single-agent crews + chat/run JSON persistence.
 
@@ -1715,7 +1766,7 @@ class DataAnalysisWorkflow:
             followup_messages,
             seed_initial_chat=True,
         )
-        self.run_supervisor_batch_loop(user_prompt, specialists)
+        self.run_supervisor_batch_loop(user_prompt, specialists, log=log, emit=emit)
 
         if not skip_terminal_reporter:
             self._run_dynamic_terminal_reporter(self._effective_user_goal(user_prompt), specialists)
@@ -1740,6 +1791,7 @@ class DataAnalysisWorkflow:
         max_specialist_steps: int,
         max_manager_turns: int,
         log: Optional[List[str]] = None,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> InteractiveSegmentResult:
         """Inner supervisor loop for one user message (until CHAT, DONE, or guardrail)."""
         while True:
@@ -1753,6 +1805,7 @@ class DataAnalysisWorkflow:
                 max_manager_turns=max_manager_turns,
                 interactive_chat_breaks=True,
                 log=log,
+                emit=emit,
             )
             if turn == "exit_manager_cap":
                 return InteractiveSegmentResult(outcome="session_exit_manager_cap")

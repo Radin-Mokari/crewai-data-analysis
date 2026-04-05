@@ -50,4 +50,21 @@ describe("formatChatReply helpers", () => {
     expect(md).toContain("![Heat]");
     expect(md).toContain("/api/artifacts/20260101_120000/charts/c.png");
   });
+
+  it("formatChatReply omits specialist excerpts when omitSpecialistExcerpts", () => {
+    const md = formatChatReply(
+      {
+        outcome: "await_user",
+        lines: ["[MANAGER]\nhi"],
+        run_id: "r1",
+        specialist_steps: [{ agent: "eda", excerpt: "long excerpt" }],
+        chart_urls: [],
+      },
+      (p) => p,
+      { omitSpecialistExcerpts: true },
+    );
+    expect(md).not.toContain("This turn: specialist");
+    expect(md).not.toContain("### eda");
+    expect(md).toContain("[MANAGER]");
+  });
 });

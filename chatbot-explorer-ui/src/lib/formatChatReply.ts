@@ -135,6 +135,11 @@ function buildChartsSection(
   return lines.join("\n\n").trimEnd();
 }
 
+export type FormatChatReplyOptions = {
+  /** When true, omit "## This turn: specialist output" (already shown in the live chain panel). */
+  omitSpecialistExcerpts?: boolean;
+};
+
 /**
  * Formats POST /chat JSON into a single markdown string for ReactMarkdown.
  * Does not wrap specialist excerpts in code fences (so **bold** and # headings render).
@@ -143,6 +148,7 @@ function buildChartsSection(
 export function formatChatReply(
   data: ChatResponse,
   resolveArtifactUrl: (path: string) => string,
+  options?: FormatChatReplyOptions,
 ): string {
   const linesBlock = data.lines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
   const meta = `\n\n---\n_Outcome:_ \`${data.outcome}\` · _run_id:_ \`${data.run_id}\``;
@@ -160,7 +166,7 @@ export function formatChatReply(
 
   const otherSteps = steps.filter((s) => s.agent !== "visualization");
 
-  if (otherSteps.length > 0) {
+  if (!options?.omitSpecialistExcerpts && otherSteps.length > 0) {
     const parts = otherSteps.map((s) => {
       const agent = s.agent || "specialist";
       const ex = (s.excerpt || "").trim();
