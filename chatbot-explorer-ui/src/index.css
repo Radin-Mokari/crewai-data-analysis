@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 30 6% 9%;
+    --foreground: 40 10% 82%;
+    --card: 30 5% 12%;
+    --card-foreground: 40 10% 82%;
+    --popover: 30 5% 14%;
+    --popover-foreground: 40 10% 82%;
+    --primary: 40 12% 70%;
+    --primary-foreground: 30 6% 9%;
+    --secondary: 30 4% 16%;
+    --secondary-foreground: 40 8% 65%;
+    --muted: 30 4% 16%;
+    --muted-foreground: 40 6% 45%;
+    --accent: 30 5% 20%;
+    --accent-foreground: 40 10% 82%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 4% 18%;
+    --input: 30 4% 18%;
+    --ring: 40 12% 50%;
+    --radius: 0.75rem;
+
+    --sidebar-background: 30 6% 7%;
+    --sidebar-foreground: 40 8% 55%;
+    --sidebar-primary: 40 12% 70%;
+    --sidebar-primary-foreground: 30 6% 9%;
+    --sidebar-accent: 30 5% 12%;
+    --sidebar-accent-foreground: 40 10% 82%;
+    --sidebar-border: 30 4% 14%;
+    --sidebar-ring: 40 12% 50%;
+
+    --chat-user: 30 5% 15%;
+    --chat-bot: 30 5% 12%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+}

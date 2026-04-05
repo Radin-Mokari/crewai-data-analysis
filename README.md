@@ -13,6 +13,7 @@ A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic s
 - **Kernel snapshots**: After each specialist step, optional `kernel_snapshot/` (Parquet + `meta.json`) for resume; `SESSION_SNAPSHOT=0` disables. Requires **pyarrow** (see `requirements.txt`).
 - **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`). **Interactive-first** (default): no automatic batch before stdin — your first line sets the goal (narrow asks like “only EDA” or “only plots” are routed by the supervisor). **Batch-first**: set `AUTO_RUN_SUPERVISOR=1` or `--batch-first` to run a full supervisor batch from `USER_ANALYSIS_PROMPT` before stdin (legacy). Use `--no-interactive` or `INTERACTIVE_SESSION=0` to skip stdin entirely. **Sequential** mode does not use this loop.
 - **Local HTTP API** (optional): `server.py` + Uvicorn — same rules as CLI; see [Usage](#usage).
+- **Web UI** (optional): `chatbot-explorer-ui/` — Vite + React chat shell that calls the same API (`/chat`, `/report`, `/pipeline`, `/health`); see [Web UI (chatbot-explorer-ui)](#web-ui-chatbot-explorer-ui).
 - **Core mode prompting**: Dynamic columns (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`); no hardcoded column names.
 - **Codified prompting**: Analysis agents plan (pseudocode) before executing; inspector-style retries on errors.
 - **Step delays & retries**: Configurable pause between supervisor turns (`DYNAMIC_STEP_DELAY_SECONDS`); task retries with backoff in code — not a separate “API rate limiter,” but reduces burst load on the LLM.
@@ -132,12 +133,40 @@ uvicorn server:app --host 127.0.0.1 --port 8765
 ```
 
 - `GET /health` — liveness and `run_id`
+- `GET /artifacts/{run_id}/charts/{filename}.png` — serve a chart from `OUTPUT_DIR/run_{run_id}/charts/` (path-safe; same folder the Python session writes to)
+- `GET /artifacts/{run_id}/report` — raw `analysis_report_{run_id}.md` if present (`text/markdown`)
 - `POST /pipeline` — one dynamic batch (`skip_terminal_reporter`); resets HTTP interactive state for a fresh chat session
-- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text)
-- `POST /report` — terminal-style reporter + save report
+- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text). Response includes **`lines`** (manager log), plus **`specialist_steps`** (new `{agent, excerpt}` entries this turn) and **`chart_urls`** (paths like `/artifacts/{run_id}/charts/....png` for the web UI to resolve under `/api`). Excerpt length capped by **`CHAT_EXCERPT_MAX_CHARS`** (default 4000).
+- `POST /report` — terminal-style reporter + save report; response includes **`report_markdown`** (file contents, capped by **`REPORT_MARKDOWN_MAX_CHARS`**, default 200000) and **`truncated`** when capped
 - `POST /reset` — rebuild workflow; optional `{"resume_run_dir": "..."}`
 
+**CORS:** The server allows browser clients from common local Vite origins (port 8080) by default. Override with comma-separated **`CORS_ORIGINS`** in `.env` if you use another URL.
+
 With **`WORKFLOW_MODE=dynamic`**, the supervisor chooses specialists using JSON decisions; transcripts go to `manager_chat.jsonl`. Use **`WORKFLOW_MODE=sequential`** for the fixed-order pipeline only.
+
+### Web UI (chatbot-explorer-ui)
+
+React + TypeScript app in **`chatbot-explorer-ui/`**. In development it proxies **`/api/*`** → `http://127.0.0.1:8765/*` (see `vite.config.ts`). The UI calls `GET /health`, `POST /chat`, `POST /report` (Reporter action chip), and **`POST /pipeline`** via the header **Full batch** button (entire dynamic supervisor loop until DONE or step limit).
+
+**Two terminals:**
+
+1. **Backend** (repo root, venv active, `.env` with `DATASET_PATH` and `GEMINI_API_KEY`):
+
+   ```bash
+   uvicorn server:app --host 127.0.0.1 --port 8765
+   ```
+
+2. **Frontend:**
+
+   ```bash
+   cd chatbot-explorer-ui
+   npm install
+   npm run dev
+   ```
+
+Open the URL Vite prints (default **http://localhost:8080**). Optional: copy `chatbot-explorer-ui/.env.example` to `.env` and set **`VITE_API_BASE_URL`** if you run the API on a non-default host/port without the proxy.
+
+**Behavior notes:** The first user message in a sidebar session sets the **`user_prompt`** goal sent on every `/chat` until you start a new chat (client-side sessions only; the server keeps one workflow). **Full batch** sends that goal to **`POST /pipeline`**; if you have not set a session goal yet, the server falls back to **`USER_ANALYSIS_PROMPT`** in `.env` (or returns 400). The **Reporter** chip triggers **`POST /report`** instead of chat; the UI renders **`report_markdown`** when returned. Normal chat replies show manager **`lines`**, specialist excerpts, and chart images via **`chart_urls`** (loaded through the dev proxy as `/api/artifacts/...`). After a full batch, the server resets HTTP interactive state (same as API docs). Requests can take a long time while CrewAI runs; controls are disabled until the response returns.
 
 **Pipeline flow (summary):**
 
@@ -173,6 +202,7 @@ Chart files use **timestamped names**, not fixed `chart_1.png`.
 ├── session_state_store.py    # Kernel snapshot save/load
 ├── server.py                 # FastAPI app (optional)
 ├── run.py                    # CLI entry point
+├── chatbot-explorer-ui/      # Vite + React UI (optional; npm install in that folder)
 ├── smoke_deterministic_brief.py
 ├── fix_bug.py                # Windows SIGHUP workaround
 ├── requirements.txt

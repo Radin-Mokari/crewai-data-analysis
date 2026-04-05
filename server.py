@@ -9,19 +9,55 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
+from starlette.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+
+def _cors_allow_origins() -> List[str]:
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if raw:
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    return [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "http://[::1]:8080",
+    ]
+
 _workflow: Optional[Any] = None
 _chat_lock = asyncio.Lock()
+
+# Max chars for specialist excerpts in POST /chat JSON; report body in POST /report.
+_CHAT_EXCERPT_MAX = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "4000"))
+_REPORT_MARKDOWN_MAX = int(os.getenv("REPORT_MARKDOWN_MAX_CHARS", "200000"))
+
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _output_dir_resolved() -> Path:
+    return Path(os.getenv("OUTPUT_DIR", "./analysis_results")).resolve()
+
+
+def _safe_run_id(run_id: str) -> str:
+    rid = (run_id or "").strip()
+    if not rid or not _RUN_ID_RE.match(rid):
+        raise HTTPException(status_code=400, detail="Invalid run_id")
+    return rid
+
+
+def _run_artifacts_root(run_id: str) -> Path:
+    rid = _safe_run_id(run_id)
+    return _output_dir_resolved() / f"run_{rid}"
 
 
 def _build_workflow() -> Any:
@@ -55,6 +91,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="CrewAI Data Analysis (local)", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allow_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health():
@@ -65,6 +109,41 @@ async def health():
         "run_id": _workflow.run_id,
         "run_dir": str(_workflow.run_output_dir),
     }
+
+
+@app.get("/artifacts/{run_id}/charts/{filename}")
+async def artifact_chart(run_id: str, filename: str):
+    """Serve a PNG from analysis_results/run_{run_id}/charts/ (path-safe)."""
+    if not filename or filename != Path(filename).name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    lower = filename.lower()
+    if not lower.endswith(".png"):
+        raise HTTPException(status_code=400, detail="Only .png charts are supported")
+    root = _run_artifacts_root(run_id)
+    path = (root / "charts" / filename).resolve()
+    charts_root = (root / "charts").resolve()
+    try:
+        path.relative_to(charts_root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Chart not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/artifacts/{run_id}/report", response_class=PlainTextResponse)
+async def artifact_report_md(run_id: str):
+    """Return analysis_report_{run_id}.md if present (UTF-8)."""
+    root = _run_artifacts_root(run_id)
+    path = root / f"analysis_report_{_safe_run_id(run_id)}.md"
+    path = path.resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path") from None
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Report not found")
+    return PlainTextResponse(content=path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
 
 
 class ChatIn(BaseModel):
@@ -92,6 +171,11 @@ def _run_chat_sync(message: str, user_prompt: str) -> Dict[str, Any]:
     mgr_cap_raw = os.getenv("INTERACTIVE_MAX_MANAGER_TURNS", "").strip()
     max_manager_turns = int(mgr_cap_raw) if mgr_cap_raw.isdigit() else 0
     log: List[str] = []
+    n_hist = len(wf.run_history_dynamic)
+    charts_dir = wf.run_output_dir / "charts"
+    charts_before: Set[str] = set()
+    if charts_dir.is_dir():
+        charts_before = {p.name for p in charts_dir.glob("*.png")}
     seg = wf._run_interactive_supervisor_segment(
         user_prompt,
         specialists,
@@ -102,7 +186,28 @@ def _run_chat_sync(message: str, user_prompt: str) -> Dict[str, Any]:
         max_manager_turns=max_manager_turns,
         log=log,
     )
-    return {"outcome": seg.outcome, "lines": log, "run_id": wf.run_id}
+    new_entries = wf.run_history_dynamic[n_hist:]
+    specialist_steps: List[Dict[str, str]] = []
+    for e in new_entries:
+        excerpt = str(e.get("output_excerpt") or "")[:_CHAT_EXCERPT_MAX]
+        specialist_steps.append(
+            {
+                "agent": str(e.get("agent") or ""),
+                "excerpt": excerpt,
+            }
+        )
+    chart_urls: List[str] = []
+    if charts_dir.is_dir():
+        for p in sorted(charts_dir.glob("*.png"), key=lambda x: x.stat().st_mtime_ns):
+            if p.name not in charts_before:
+                chart_urls.append(f"/artifacts/{wf.run_id}/charts/{p.name}")
+    return {
+        "outcome": seg.outcome,
+        "lines": log,
+        "run_id": wf.run_id,
+        "specialist_steps": specialist_steps,
+        "chart_urls": chart_urls,
+    }
 
 
 @app.post("/chat")
@@ -172,7 +277,24 @@ def _report_sync() -> Dict[str, Any]:
     up = wf._effective_user_goal(fallback)
     wf._run_dynamic_terminal_reporter(up, specialists)
     wf._save_report_to_file()
-    return {"ok": True, "run_dir": str(wf.run_output_dir)}
+    report_path = wf.report_path
+    if report_path is None:
+        report_path = wf.run_output_dir / f"analysis_report_{wf.run_id}.md"
+    report_markdown = ""
+    truncated = False
+    if report_path.is_file():
+        raw = report_path.read_text(encoding="utf-8")
+        if len(raw) > _REPORT_MARKDOWN_MAX:
+            report_markdown = raw[:_REPORT_MARKDOWN_MAX]
+            truncated = True
+        else:
+            report_markdown = raw
+    return {
+        "ok": True,
+        "run_dir": str(wf.run_output_dir),
+        "report_markdown": report_markdown,
+        "truncated": truncated,
+    }
 
 
 @app.post("/report")
