@@ -158,9 +158,11 @@ def try_load_kernel_snapshot(executor: Any, run_dir: Path) -> bool:
             path = snap / f"{name}.parquet"
             if key_saved is True and path.is_file():
                 g[name] = pd.read_parquet(path)
-            elif path.is_file():
-                g[name] = pd.read_parquet(path)
             else:
+                if key_saved is False and path.is_file():
+                    print(
+                        f"[SESSION_SNAPSHOT] Ignoring stale parquet for {name} because meta marks {name}_saved=false: {path}"
+                    )
                 g[name] = None
 
         g["TIME_INDEX_OK"] = bool(meta.get("TIME_INDEX_OK", False))

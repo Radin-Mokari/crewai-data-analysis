@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "mode": "dynamic_supervisor",
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-2\\California_Housing_Prices.csv",
+  "run_id": "20260405_195844",
+  "updated_at": "2026-04-05T19:59:15"
+}

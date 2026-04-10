@@ -83,6 +83,10 @@ WORKFLOW_MODE=dynamic
 USER_ANALYSIS_PROMPT=Your analysis goals in plain language
 # Optional: resume — path to an existing run_* folder
 # RESUME_RUN_DIR=./analysis_results/run_YYYYMMDD_HHMMSS
+# Optional: resume by run id under OUTPUT_DIR
+# RESUME_RUN_ID=YYYYMMDD_HHMMSS
+# Optional strict resume guard: fail on shape/path mismatch between restored kernel and current dataset
+# RESUME_STRICT=0
 
 # Interactive after dynamic run: unset = on for dynamic; 0 = off; 1 = on
 # INTERACTIVE_SESSION=
@@ -124,7 +128,7 @@ python run.py --batch-first
 
 **Interactive commands:** `/report` (regenerate full markdown report), `exit` / `quit` / `q`. `CHAT` supervisor turns do not consume `DYNAMIC_MAX_STEPS` (only specialist Crew runs do).
 
-**Kernel snapshot (resume):** Outputs under `analysis_results/run_*/kernel_snapshot/`. Start with `RESUME_RUN_DIR` (or `--resume`) pointing at that folder to reload frames + chat/history.
+**Kernel snapshot (resume):** Outputs under `analysis_results/run_*/kernel_snapshot/`. Resume with `RESUME_RUN_DIR` (or `--resume`) or `RESUME_RUN_ID`. Set `RESUME_STRICT=1` to fail fast if restored kernel state does not match the current dataset path/shape.
 
 **Local HTTP API:**
 
@@ -135,12 +139,18 @@ uvicorn server:app --host 127.0.0.1 --port 8765
 - `GET /health` — liveness and `run_id`
 - `GET /artifacts/{run_id}/charts/{filename}.png` — serve a chart from `OUTPUT_DIR/run_{run_id}/charts/` (path-safe; same folder the Python session writes to)
 - `GET /artifacts/{run_id}/report` — raw `analysis_report_{run_id}.md` if present (`text/markdown`)
+- `GET /artifacts/{run_id}/steps/{step}` — full specialist step output from `step_outputs/` (when available)
 - `POST /pipeline` — one dynamic batch (`skip_terminal_reporter`); resets HTTP interactive state for a fresh chat session
 - `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text). Response includes **`lines`** (manager log), plus **`specialist_steps`** (new `{agent, excerpt}` entries this turn) and **`chart_urls`** (paths like `/artifacts/{run_id}/charts/....png` for the web UI to resolve under `/api`). Excerpt length capped by **`CHAT_EXCERPT_MAX_CHARS`** (default 4000).
 - `POST /report` — terminal-style reporter + save report; response includes **`report_markdown`** (file contents, capped by **`REPORT_MARKDOWN_MAX_CHARS`**, default 200000) and **`truncated`** when capped
 - `POST /reset` — rebuild workflow; optional `{"resume_run_dir": "..."}`
 
 **CORS:** The server allows browser clients from common local Vite origins (port 8080) by default. Override with comma-separated **`CORS_ORIGINS`** in `.env` if you use another URL.
+
+**Manager context knobs (optional):**
+- `MANAGER_DIGEST_LATEST_EXCERPT_CHARS` / `MANAGER_DIGEST_ERROR_EXCERPT_CHARS` — adaptive digest caps for latest and error-prone steps.
+- `MANAGER_ESCALATE_LONG_OUTPUT_CHARS` / `MANAGER_ESCALATION_CONTEXT_CHARS` — when latest specialist output is large or has warnings/errors, include more context for manager routing.
+- `LOCAL_MEMORY_DB_PATH` — custom SQLite path for local run memory (`runs`, `steps`, `manager_turns`); default is `run_output_dir/session_memory.sqlite3`.
 
 With **`WORKFLOW_MODE=dynamic`**, the supervisor chooses specialists using JSON decisions; transcripts go to `manager_chat.jsonl`. Use **`WORKFLOW_MODE=sequential`** for the fixed-order pipeline only.
 

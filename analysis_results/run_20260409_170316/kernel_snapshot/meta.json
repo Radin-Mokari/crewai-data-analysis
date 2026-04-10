@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-2\\California_Housing_Prices.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "env_check_df_raw": "df_raw is available.",
+    "env_check_numeric_cols": "NUMERIC_COLUMNS is available.",
+    "env_check_categorical_cols": "CATEGORICAL_COLUMNS is available.",
+    "df_raw_shape": [
+      20640,
+      10
+    ],
+    "df_raw_columns": [
+      "longitude",
+      "latitude",
+      "housing_median_age",
+      "total_rooms",
+      "total_bedrooms",
+      "population",
+      "households",
+      "median_income",
+      "median_house_value",
+      "ocean_proximity"
+    ],
+    "missing_values": {
+      "total_bedrooms": 207
+    },
+    "messages": [
+      "Found missing values in 1 columns.",
+      "No duplicate rows found.",
+      "Filled 207 missing values in numeric column \"total_bedrooms\" with median (435.0).",
+      "No primary time column found or suitable for sorting; TIME_INDEX_OK remains False."
+    ],
+    "duplicates": "No duplicate rows found.",
+    "df_raw_dtypes": {
+      "longitude": "float64",
+      "latitude": "float64",
+      "housing_median_age": "float64",
+      "total_rooms": "float64",
+      "total_bedrooms": "float64",
+      "population": "float64",
+      "households": "float64",
+      "median_income": "float64",
+      "median_house_value": "float64",
+      "ocean_proximity": "str"
+    },
+    "numeric_summary": {
+      "longitude": {
+        "count": 20640.0,
+        "mean": -119.56970445736432,
+        "std": 2.0035317235025882,
+        "min": -124.35,
+        "25%": -121.8,
+        "50%": -118.49,
+        "75%": -118.01,
+        "max": -114.31
+      },
+      "latitude": {
+        "count": 20640.0,
+        "mean": 35.63186143410852,
+        "std": 2.1359523974571153,
+        "min": 32.54,
+        "25%": 33.93,
+        "50%": 34.26,
+        "75%": 37.71,
+        "max": 41.95
+      },
+      "housing_median_age": {
+        "count": 20640.0,
+        "mean": 28.639486434108527,
+        "std": 12.58555761211165,
+        "min": 1.0,
+        "25%": 18.0,
+        "50%": 29.0,
+        "75%": 37.0,
+        "max": 52.0
+      },
+      "total_rooms": {
+        "count": 20640.0,
+        "mean": 2635.7630813953488,
+        "std": 2181.615251582795,
+        "min": 2.0,
+        "25%": 1447.75,
+        "50%": 2127.0,
+        "75%": 3148.0,
+        "max": 39320.0
+      },
+      "total_bedrooms": {
+        "count": 20433.0,
+        "mean": 537.8705525375618,
+        "std": 421.3850700740323,
+        "min": 1.0,
+        "25%": 296.0,
+        "50%": 435.0,
+        "75%": 647.0,
+        "max": 6445.0
+      },
+      "population": {
+        "count": 20640.0,
+        "mean": 1425.4767441860465,
+        "std": 1132.462121765341,
+        "min": 3.0,
+        "25%": 787.0,
+        "50%": 1166.0,
+        "75%": 1725.0,
+        "max": 35682.0
+      },
+      "households": {
+        "count": 20640.0,
+        "mean": 499.5396802325581,
+        "std": 382.32975283161073,
+        "min": 1.0,
+        "25%": 280.0,
+        "50%": 409.0,
+        "75%": 605.0,
+        "max": 6082.0
+      },
+      "median_income": {
+        "count": 20640.0,
+        "mean": 3.8706710029069766,
+        "std": 1.8998217179452688,
+        "min": 0.4999,
+        "25%": 2.5633999999999997,
+        "50%": 3.5347999999999997,
+        "75%": 4.74325,
+        "max": 15.0001
+      },
+      "median_house_value": {
+        "count": 20640.0,
+        "mean": 206855.81690891474,
+        "std": 115395.61587441387,
+        "min": 14999.0,
+        "25%": 119600.0,
+        "50%": 179700.0,
+        "75%": 264725.0,
+        "max": 500001.0
+      }
+    },
+    "categorical_nunique": {
+      "ocean_proximity": 5
+    },
+    "df_clean_shape": [
+      20640,
+      10
+    ]
+  },
+  "DATASET_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value",
+    "ocean_proximity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "DATASET_SHAPE": [
+    20640,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": false
+}

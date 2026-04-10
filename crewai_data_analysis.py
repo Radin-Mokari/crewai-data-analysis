@@ -6,6 +6,7 @@ import os
 import re
 import json
 import time
+import sqlite3
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from datetime import datetime
@@ -1117,13 +1118,44 @@ def format_run_history_digest(
     """Compact step list for prompts. Supervisor uses short excerpts; reporter/report use larger limits."""
     if not entries:
         return "(no steps yet)"
+    latest_cap = int(os.getenv("MANAGER_DIGEST_LATEST_EXCERPT_CHARS", str(max_excerpt_chars)))
+    error_cap = int(os.getenv("MANAGER_DIGEST_ERROR_EXCERPT_CHARS", str(max(max_excerpt_chars, 1800))))
     lines: List[str] = []
-    for e in entries[-last_n:]:
+    subset = entries[-last_n:]
+    for i, e in enumerate(subset):
         instr = str(e.get("instruction", ""))[:max_instruction_chars]
-        ex = str(e.get("output_excerpt", ""))[:max_excerpt_chars]
-        lines.append(
-            f"- step {e.get('step')}: {e.get('agent')} — instruction: {instr}\n" f"  excerpt: {ex}"
-        )
+        cap = max_excerpt_chars
+        hs = e.get("handoff_structured")
+        hs_status = str(hs.get("status", "")).lower() if isinstance(hs, dict) else ""
+        if hs_status in ("error", "warning"):
+            cap = error_cap
+        elif i == len(subset) - 1:
+            cap = latest_cap
+        ex = str(e.get("output_excerpt", ""))[:cap]
+        if isinstance(hs, dict) and hs:
+            hs_status = str(hs.get("status", "success")).lower()
+            goal_completed = bool(hs.get("goal_completed", hs_status == "success"))
+            findings = hs.get("key_findings") or []
+            warnings = hs.get("errors_or_warnings") or []
+            next_action = str(hs.get("next_recommended_action") or "")[:240]
+            finding_line = ""
+            if isinstance(findings, list) and findings:
+                finding_line = "; ".join(str(x) for x in findings[:2])[:cap]
+            warning_line = ""
+            if isinstance(warnings, list) and warnings:
+                warning_line = "; ".join(str(x) for x in warnings[:2])[:cap]
+            lines.append(
+                f"- step {e.get('step')}: {e.get('agent')} — status: {hs_status}; goal_completed: {goal_completed}\n"
+                f"  instruction: {instr}\n"
+                f"  key_findings: {finding_line or '(none)'}\n"
+                f"  warnings: {warning_line or '(none)'}\n"
+                f"  next_action: {next_action or '(none)'}\n"
+                f"  excerpt: {ex}"
+            )
+        else:
+            lines.append(
+                f"- step {e.get('step')}: {e.get('agent')} — instruction: {instr}\n" f"  excerpt: {ex}"
+            )
     return "\n".join(lines)
 
 
@@ -1143,6 +1175,213 @@ def _report_text_has_placeholders(text: str) -> bool:
         "`[Number]`",
     )
     return any(m in text for m in markers)
+
+
+def _detect_execution_failure(text: str) -> bool:
+    """Detect concrete execution failures while avoiding prose false positives."""
+    if not text:
+        return False
+    s = str(text)
+    if "Error after retries:" in s:
+        return True
+    if "EXECUTOR ERROR:" in s:
+        return True
+    if re.search(r"Traceback\s+\(most recent call last\):", s):
+        return True
+    if re.search(r'"success"\s*:\s*false', s, flags=re.IGNORECASE):
+        return True
+    if re.search(r'"error"\s*:\s*"(?!\s*(?:null|none)\s*")', s, flags=re.IGNORECASE):
+        return True
+    return False
+
+
+def _sqlite_json_dumps(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+def build_handoff_structured(raw_output: str, *, state_flags: Dict[str, Any]) -> Dict[str, Any]:
+    text = (raw_output or "").strip()
+    failed = _detect_execution_failure(text)
+    warnings: List[str] = []
+    if failed:
+        warnings.append("execution_failure_detected")
+    if isinstance(state_flags, dict):
+        missing = [k for k, v in state_flags.items() if k.startswith("has_") and not bool(v)]
+        if missing:
+            warnings.append("missing_state_flags: " + ", ".join(missing))
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    key_findings = lines[:5]
+    metrics: List[str] = []
+    for ln in lines[:120]:
+        if re.search(r"\b\d+(\.\d+)?%?\b", ln):
+            metrics.append(ln[:300])
+        if len(metrics) >= 6:
+            break
+    artifacts = sorted(set(re.findall(r"chart_[^ \n]+\.png", text)))
+    status = "error" if failed else ("warning" if warnings else "success")
+    next_action = (
+        "Inspect failure details and retry with narrower instruction."
+        if failed
+        else "Proceed to the next analysis step."
+    )
+    return {
+        "status": status,
+        "goal_completed": status == "success",
+        "key_findings": key_findings,
+        "metrics": metrics,
+        "errors_or_warnings": warnings,
+        "next_recommended_action": next_action,
+        "artifacts": artifacts,
+    }
+
+
+class LocalMemoryStore:
+    """Local SQLite store for durable run, step, and manager memory."""
+
+    def __init__(self, db_path: Path):
+        self.db_path = Path(db_path).resolve()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_schema(self) -> None:
+        with self._connect() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    dataset_path TEXT NOT NULL,
+                    mode TEXT,
+                    started_at TEXT,
+                    updated_at TEXT,
+                    meta_json TEXT
+                );
+                CREATE TABLE IF NOT EXISTS steps (
+                    run_id TEXT NOT NULL,
+                    step INTEGER NOT NULL,
+                    agent TEXT NOT NULL,
+                    instruction TEXT,
+                    handoff_json TEXT,
+                    output_preview TEXT,
+                    full_output_text TEXT,
+                    output_len INTEGER,
+                    artifact_path TEXT,
+                    created_at TEXT,
+                    PRIMARY KEY (run_id, step)
+                );
+                CREATE TABLE IF NOT EXISTS manager_turns (
+                    run_id TEXT NOT NULL,
+                    turn INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT,
+                    role TEXT,
+                    content TEXT,
+                    context_meta_json TEXT,
+                    created_at TEXT
+                );
+                """
+            )
+
+    def upsert_run(self, *, run_id: str, dataset_path: str, mode: str, meta: Dict[str, Any]) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runs(run_id, dataset_path, mode, started_at, updated_at, meta_json)
+                VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    dataset_path=excluded.dataset_path,
+                    mode=excluded.mode,
+                    updated_at=excluded.updated_at,
+                    meta_json=excluded.meta_json
+                """,
+                (run_id, dataset_path, mode, now, now, _sqlite_json_dumps(meta)),
+            )
+
+    def insert_manager_turn(
+        self,
+        *,
+        run_id: str,
+        kind: str,
+        role: str,
+        content: str,
+        context_meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO manager_turns(run_id, kind, role, content, context_meta_json, created_at)
+                VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    kind,
+                    role,
+                    content,
+                    _sqlite_json_dumps(context_meta or {}),
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+    def upsert_step(
+        self,
+        *,
+        run_id: str,
+        step: int,
+        agent: str,
+        instruction: str,
+        handoff_structured: Dict[str, Any],
+        output_preview: str,
+        full_output_text: str,
+        output_len: int,
+        artifact_path: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO steps(
+                    run_id, step, agent, instruction, handoff_json, output_preview, full_output_text, output_len, artifact_path, created_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id, step) DO UPDATE SET
+                    agent=excluded.agent,
+                    instruction=excluded.instruction,
+                    handoff_json=excluded.handoff_json,
+                    output_preview=excluded.output_preview,
+                    full_output_text=excluded.full_output_text,
+                    output_len=excluded.output_len,
+                    artifact_path=excluded.artifact_path
+                """,
+                (
+                    run_id,
+                    int(step),
+                    agent,
+                    instruction,
+                    _sqlite_json_dumps(handoff_structured),
+                    output_preview,
+                    full_output_text,
+                    int(output_len),
+                    artifact_path,
+                    datetime.now().isoformat(timespec="seconds"),
+                ),
+            )
+
+    def get_latest_step_row(self, *, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT step, agent, handoff_json, full_output_text, output_len, artifact_path
+                FROM steps
+                WHERE run_id=?
+                ORDER BY step DESC
+                LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+        return dict(row) if row else None
 
 
 REPORTER_GROUNDING_RULES = (
@@ -1206,10 +1445,21 @@ class DataAnalysisWorkflow:
         self.manager_chat_path = self.run_output_dir / "manager_chat.jsonl"
         self.session_meta_path = self.run_output_dir / "session_meta.json"
         self.run_history_path = self.run_output_dir / "run_history.json"
+        self.step_outputs_dir = self.run_output_dir / "step_outputs"
+        self.step_outputs_dir.mkdir(parents=True, exist_ok=True)
         self.manager_chat_records: List[Dict[str, Any]] = []
         self.run_history_dynamic: List[Dict[str, Any]] = []
         self.brief_text: str = ""
         self.brief_dict: Dict[str, Any] = {}
+        db_path_raw = (os.getenv("LOCAL_MEMORY_DB_PATH") or "").strip()
+        db_path = Path(db_path_raw).resolve() if db_path_raw else (self.run_output_dir / "session_memory.sqlite3")
+        self.local_memory = LocalMemoryStore(db_path)
+        self.local_memory.upsert_run(
+            run_id=self.run_id,
+            dataset_path=self.dataset_path,
+            mode="dynamic_supervisor",
+            meta={"resume": bool(resume_raw), "run_output_dir": str(self.run_output_dir)},
+        )
 
         if resume_raw and self.manager_chat_path.exists():
             self.manager_chat_records = load_jsonl_records(self.manager_chat_path)
@@ -1242,14 +1492,28 @@ class DataAnalysisWorkflow:
         dr = g.get("df_raw")
         if not isinstance(dr, pd.DataFrame) or not isinstance(sh, (list, tuple)) or len(sh) < 2:
             return
+        strict_resume = os.getenv("RESUME_STRICT", "0").strip().lower() in ("1", "true", "yes", "on")
         try:
             if int(dr.shape[0]) != int(sh[0]) or int(dr.shape[1]) != int(sh[1]):
-                print(
+                msg = (
                     f"[RESUME WARNING] df_raw shape {tuple(dr.shape)} differs from dataset brief {tuple(sh)}. "
                     "Use the same DATASET_PATH as when this run was created."
                 )
+                if strict_resume:
+                    raise RuntimeError(msg.replace("[RESUME WARNING]", "[RESUME ERROR]"))
+                print(msg)
         except (TypeError, ValueError):
             pass
+        kernel_path = str(g.get("DATASET_PATH") or "").strip()
+        current_path = str(self.dataset_path or "").strip()
+        if kernel_path and current_path and kernel_path != current_path:
+            msg = (
+                f"[RESUME WARNING] Kernel DATASET_PATH ({kernel_path}) differs from current DATASET_PATH "
+                f"({current_path})."
+            )
+            if strict_resume:
+                raise RuntimeError(msg.replace("[RESUME WARNING]", "[RESUME ERROR]"))
+            print(msg)
 
     def _append_manager_chat_record(self, kind: str, role: str, content: str, **extra: Any) -> None:
         rec = {
@@ -1261,6 +1525,16 @@ class DataAnalysisWorkflow:
         }
         self.manager_chat_records.append(rec)
         persist_jsonl_record(self.manager_chat_path, rec)
+        try:
+            self.local_memory.insert_manager_turn(
+                run_id=self.run_id,
+                kind=kind,
+                role=role,
+                content=content,
+                context_meta=extra.get("context_meta"),
+            )
+        except Exception as e:
+            print(f"[LOCAL_MEMORY] Manager turn write failed: {e}")
 
     def _save_dynamic_run_history(self) -> None:
         self.run_history_path.write_text(
@@ -1273,6 +1547,46 @@ class DataAnalysisWorkflow:
             save_kernel_snapshot(self.executor, self.run_output_dir)
         except Exception as e:
             print(f"[SESSION_SNAPSHOT] Save failed: {e}")
+
+    def _write_step_output_artifact(self, *, step: int, agent: str, output_text: str) -> str:
+        safe_agent = re.sub(r"[^A-Za-z0-9_-]+", "_", str(agent))
+        path = self.step_outputs_dir / f"step_{int(step):03d}_{safe_agent}.md"
+        path.write_text(output_text or "", encoding="utf-8")
+        return str(path)
+
+    def _latest_step_escalation_context(self) -> Tuple[str, str, int]:
+        try:
+            long_threshold = int(os.getenv("MANAGER_ESCALATE_LONG_OUTPUT_CHARS", "5000"))
+            context_cap = int(os.getenv("MANAGER_ESCALATION_CONTEXT_CHARS", "6000"))
+        except ValueError:
+            long_threshold, context_cap = 5000, 6000
+        latest = self.local_memory.get_latest_step_row(run_id=self.run_id)
+        if not latest:
+            return "", "", 0
+        full_text = str(latest.get("full_output_text") or "")
+        out_len = int(latest.get("output_len") or len(full_text))
+        hs_status = ""
+        handoff = latest.get("handoff_json")
+        if handoff:
+            try:
+                hs_status = str(json.loads(str(handoff)).get("status", "")).lower()
+            except Exception:
+                hs_status = ""
+        reason = ""
+        if hs_status in ("error", "warning"):
+            reason = hs_status
+        elif out_len >= long_threshold:
+            reason = "long_output"
+        if not reason:
+            return "", "", 0
+        step = latest.get("step")
+        agent = latest.get("agent")
+        excerpt = full_text[:context_cap]
+        block = (
+            f"Escalated latest step context (reason={reason}, step={step}, agent={agent}, chars={len(excerpt)}):\n"
+            f"{excerpt}"
+        )
+        return reason, block, len(excerpt)
 
     def ensure_dynamic_brief(self) -> None:
         """Compute dataset brief for supervisor prompts if not already loaded."""
@@ -1576,6 +1890,9 @@ class DataAnalysisWorkflow:
             f"validate_state:\n{json.dumps(flags)}\n\n"
             f"run_history_digest:\n{digest}\n"
         )
+        esc_reason, esc_block, esc_chars = self._latest_step_escalation_context()
+        if esc_block:
+            user_payload += f"\n\n{esc_block}\n"
         if state.repeat_streak >= 2:
             user_payload += (
                 "\nGUARDRAIL_HINT: The same specialist role was chosen repeatedly. "
@@ -1703,7 +2020,8 @@ class DataAnalysisWorkflow:
             task_key=task_key,
             extra_inputs={},
         )
-        excerpt = str(result)[:4500] if result is not None else ""
+        full_output = self._extract_crew_text(result)
+        excerpt = full_output[:4500]
         _emit(
             {
                 "type": "specialist_complete",
@@ -1713,20 +2031,54 @@ class DataAnalysisWorkflow:
             }
         )
         post_flags = self.executor.validate_state()
+        handoff_structured = build_handoff_structured(full_output, state_flags=dict(post_flags))
+        output_artifact_path = self._write_step_output_artifact(
+            step=step,
+            agent=decision.next_agent,
+            output_text=full_output,
+        )
+        output_preview = full_output[:excerpt_cap]
+        output_len = len(full_output)
         self.run_history_dynamic.append(
             {
                 "step": step,
                 "agent": decision.next_agent,
                 "instruction": decision.instruction,
                 "output_excerpt": excerpt,
+                "output_preview": output_preview,
+                "output_len": output_len,
+                "output_artifact_path": output_artifact_path,
+                "handoff_structured": handoff_structured,
                 "state_flags": dict(post_flags),
             }
         )
         self._save_dynamic_run_history()
+        try:
+            self.local_memory.upsert_step(
+                run_id=self.run_id,
+                step=step,
+                agent=decision.next_agent,
+                instruction=decision.instruction,
+                handoff_structured=handoff_structured,
+                output_preview=output_preview,
+                full_output_text=full_output,
+                output_len=output_len,
+                artifact_path=output_artifact_path,
+            )
+        except Exception as e:
+            print(f"[LOCAL_MEMORY] Step write failed: {e}")
         self._append_manager_chat_record(
             "analysis_digest",
             "user",
             f"[Analysis step {step} | {decision.next_agent}]\n{excerpt}",
+            context_meta={
+                "step": step,
+                "agent": decision.next_agent,
+                "output_len": output_len,
+                "output_preview_len": len(output_preview),
+                "escalation_reason": esc_reason,
+                "escalation_chars": esc_chars,
+            },
         )
         self._save_kernel_snapshot_safe()
         time.sleep(step_delay)
@@ -1910,8 +2262,8 @@ class DataAnalysisWorkflow:
                     verbose=True,
                 )
                 result = single_crew.kickoff(inputs=extra_inputs)
-                result_str = str(result)
-                if "Error" in result_str or "Traceback" in result_str:
+                result_str = self._extract_crew_text(result)
+                if _detect_execution_failure(result_str):
                     last_error = f"Task output indicates error: {result_str[:200]}"
                     print(f"[RETRY] Detected error in {task_key}: {last_error}")
                     if attempt <= max_retries:

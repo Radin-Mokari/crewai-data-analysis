@@ -62,12 +62,29 @@ def _run_artifacts_root(run_id: str) -> Path:
     return _output_dir_resolved() / f"run_{rid}"
 
 
+def _safe_step(step: int) -> int:
+    try:
+        s = int(step)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid step") from None
+    if s <= 0:
+        raise HTTPException(status_code=400, detail="Invalid step")
+    return s
+
+
 def _build_workflow() -> Any:
     from crewai_data_analysis import DataAnalysisWorkflow
 
     dataset_path = os.getenv("DATASET_PATH", "").strip()
     output_dir = os.getenv("OUTPUT_DIR", "./analysis_results")
-    resume = (os.getenv("RESUME_RUN_DIR") or "").strip() or None
+    resume = (os.getenv("RESUME_RUN_DIR") or "").strip()
+    if not resume:
+        rid = (os.getenv("RESUME_RUN_ID") or os.getenv("RUN_ID") or "").strip()
+        if rid:
+            cand = Path(output_dir).resolve() / f"run_{rid}"
+            if cand.is_dir():
+                resume = str(cand)
+    resume = resume or None
     if not dataset_path:
         raise RuntimeError("DATASET_PATH is required")
     if not Path(dataset_path).exists():
@@ -146,6 +163,25 @@ async def artifact_report_md(run_id: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Report not found")
     return PlainTextResponse(content=path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/artifacts/{run_id}/steps/{step}", response_class=PlainTextResponse)
+async def artifact_step_output(run_id: str, step: int):
+    """Return full specialist output saved under step_outputs/ for a given run step."""
+    root = _run_artifacts_root(run_id)
+    s = _safe_step(step)
+    step_dir = (root / "step_outputs").resolve()
+    if not step_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Step output directory not found")
+    matches = sorted(step_dir.glob(f"step_{s:03d}_*.md"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="Step output not found")
+    path = matches[0].resolve()
+    try:
+        path.relative_to(step_dir)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path") from None
+    return PlainTextResponse(content=path.read_text(encoding="utf-8"), media_type="text/plain; charset=utf-8")
 
 
 class ChatIn(BaseModel):
@@ -242,27 +278,27 @@ async def chat(body: ChatIn):
 @app.post("/chat/stream")
 async def chat_stream(body: ChatIn):
     """Server-Sent Events: supervisor events, then `final` with same JSON shape as POST /chat."""
-    async with _chat_lock:
-        if _workflow is None:
-            raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
-        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
-        if not up:
-            raise HTTPException(
-                status_code=400,
-                detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
-            )
-        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+    if _workflow is None:
+        raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
+    up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
+    if not up:
+        raise HTTPException(
+            status_code=400,
+            detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
+        )
+    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
 
-        def work() -> None:
-            try:
-                result = _run_chat_sync(body.message.strip(), up, emit=q.put)
-                q.put({"type": "final", **result})
-            except Exception as e:
-                q.put({"type": "error", "message": str(e)})
-            finally:
-                q.put(None)
+    def work() -> None:
+        try:
+            result = _run_chat_sync(body.message.strip(), up, emit=q.put)
+            q.put({"type": "final", **result})
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)
 
-        async def event_gen():
+    async def event_gen():
+        async with _chat_lock:
             asyncio.get_running_loop().run_in_executor(None, work)
             while True:
                 item = await asyncio.to_thread(q.get)
@@ -270,15 +306,15 @@ async def chat_stream(body: ChatIn):
                     break
                 yield _sse_data_line(item)
 
-        return StreamingResponse(
-            event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class PipelineIn(BaseModel):
@@ -332,36 +368,36 @@ async def run_pipeline(body: PipelineIn):
 @app.post("/pipeline/stream")
 async def run_pipeline_stream(body: PipelineIn):
     """SSE: supervisor events for full batch, then `final` with ok, run_id, specialist_steps, lines."""
-    async with _chat_lock:
-        if _workflow is None:
-            raise HTTPException(status_code=503, detail="Workflow not initialized")
-        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
-        if not up:
-            raise HTTPException(
-                status_code=400,
-                detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
+    if _workflow is None:
+        raise HTTPException(status_code=503, detail="Workflow not initialized")
+    up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
+    if not up:
+        raise HTTPException(
+            status_code=400,
+            detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
+        )
+    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+    log_lines: List[str] = []
+
+    def work() -> None:
+        try:
+            result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
+            q.put(
+                {
+                    "type": "final",
+                    "ok": result["ok"],
+                    "run_id": result["run_id"],
+                    "specialist_steps": result["specialist_steps"],
+                    "lines": list(log_lines),
+                }
             )
-        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
-        log_lines: List[str] = []
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)
 
-        def work() -> None:
-            try:
-                result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
-                q.put(
-                    {
-                        "type": "final",
-                        "ok": result["ok"],
-                        "run_id": result["run_id"],
-                        "specialist_steps": result["specialist_steps"],
-                        "lines": list(log_lines),
-                    }
-                )
-            except Exception as e:
-                q.put({"type": "error", "message": str(e)})
-            finally:
-                q.put(None)
-
-        async def event_gen():
+    async def event_gen():
+        async with _chat_lock:
             asyncio.get_running_loop().run_in_executor(None, work)
             while True:
                 item = await asyncio.to_thread(q.get)
@@ -369,15 +405,15 @@ async def run_pipeline_stream(body: PipelineIn):
                     break
                 yield _sse_data_line(item)
 
-        return StreamingResponse(
-            event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _report_sync() -> Dict[str, Any]:

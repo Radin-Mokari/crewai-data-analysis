@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-2\\California_Housing_Prices.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "messages": [
+      "--- Environment Check ---",
+      "df_raw loaded successfully with shape: (20640, 10)",
+      "DATASET_COLUMNS found with 10 columns.",
+      "NUMERIC_COLUMNS found with 9 columns.",
+      "CATEGORICAL_COLUMNS found with 1 columns.",
+      "--- Quality Inspection and Cleaning ---",
+      "No duplicate rows found.",
+      "Imputed missing numeric values in 'total_bedrooms' with median: 435.0.",
+      "WARNING: Some missing values remain after imputation.",
+      "df_clean shape after cleaning: (20640, 10)"
+    ],
+    "df_raw_shape": [
+      20640,
+      10
+    ],
+    "DATASET_COLUMNS_count": 10,
+    "NUMERIC_COLUMNS_count": 9,
+    "CATEGORICAL_COLUMNS_count": 1,
+    "duplicate_rows_initial": 0,
+    "missing_values_before_imputation": {
+      "total_bedrooms": 207
+    },
+    "missing_values_after_imputation": {
+      "total_bedrooms": 207
+    }
+  },
+  "DATASET_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value",
+    "ocean_proximity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "DATASET_SHAPE": [
+    20640,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": false
+}

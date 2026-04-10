@@ -1,0 +1,28 @@
+[
+  {
+    "step": 1,
+    "agent": "cleaning",
+    "instruction": "Run full preparation: env check, validation_report, and df_clean before other specialists.",
+    "output_excerpt": "The data was cleaned by dropping duplicate rows and imputing missing values (median for numeric, mode for categorical). Data types were standardized, and a correlation matrix of the numeric columns was generated and displayed. The final `df_clean` has a shape of (20640, 10).",
+    "state_flags": {
+      "has_df_raw": true,
+      "has_df_clean": true,
+      "has_df_features": true,
+      "has_validation_report": true,
+      "time_index_ok": false
+    }
+  },
+  {
+    "step": 2,
+    "agent": "statistics",
+    "instruction": "Calculate the correlation matrix for all numeric columns in `df_clean`. Identify and output the top 3 strongest absolute correlations between distinct pairs of columns, excluding self-correlations. For each, specify the two columns and their correlation value.",
+    "output_excerpt": "Correlation 1: total_bedrooms and households with correlation 0.9797\nCorrelation 2: total_rooms and total_bedrooms with correlation 0.9304\nCorrelation 3: latitude and longitude with correlation -0.9247",
+    "state_flags": {
+      "has_df_raw": true,
+      "has_df_clean": true,
+      "has_df_features": true,
+      "has_validation_report": true,
+      "time_index_ok": false
+    }
+  }
+]

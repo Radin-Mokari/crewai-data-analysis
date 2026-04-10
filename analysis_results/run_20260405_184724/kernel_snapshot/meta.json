@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-2\\California_Housing_Prices.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "messages": [
+      "--- Environment Check ---",
+      "df_raw loaded with shape: (20640, 10)",
+      "NUMERIC_COLUMNS defined with 9 columns.",
+      "CATEGORICAL_COLUMNS defined with 1 columns.",
+      "\n--- Initial Data Profiling ---",
+      "Detected 1 columns with missing values.",
+      "  - total_bedrooms: 207 missing (1.00%)",
+      "No duplicate rows detected in df_raw.",
+      "Data types summarized.",
+      "\n--- Cleaning Steps ---",
+      "Imputed missing values in numeric column \"total_bedrooms\" with median: 435.0",
+      "Coerced \"total_bedrooms\" to numeric and re-imputed new NaNs with median: 435.0",
+      "Converted \"ocean_proximity\" to category type.",
+      "df_clean final shape: (20640, 10)",
+      "\n--- Plotting Correlation Matrix ---",
+      "Generated correlation matrix plot for numeric columns."
+    ],
+    "df_raw_exists": true,
+    "numeric_cols_exists": true,
+    "categorical_cols_exists": true,
+    "missing_values": {
+      "total_bedrooms": 207
+    },
+    "duplicates": "None",
+    "data_types_summary": {
+      "longitude": "float64",
+      "latitude": "float64",
+      "housing_median_age": "float64",
+      "total_rooms": "float64",
+      "total_bedrooms": "float64",
+      "population": "float64",
+      "households": "float64",
+      "median_income": "float64",
+      "median_house_value": "float64",
+      "ocean_proximity": "str"
+    }
+  },
+  "DATASET_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value",
+    "ocean_proximity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "DATASET_SHAPE": [
+    20640,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": false
+}
