@@ -212,12 +212,14 @@ def _run_chat_sync(
         for p in sorted(charts_dir.glob("*.png"), key=lambda x: x.stat().st_mtime_ns):
             if p.name not in charts_before:
                 chart_urls.append(f"/artifacts/{wf.run_id}/charts/{p.name}")
+
     return {
         "outcome": seg.outcome,
         "lines": log,
         "run_id": wf.run_id,
         "specialist_steps": specialist_steps,
         "chart_urls": chart_urls,
+        "manager_reply": seg.manager_reply or "",
     }
 
 

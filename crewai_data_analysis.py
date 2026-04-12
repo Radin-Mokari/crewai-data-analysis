@@ -32,6 +32,7 @@ class InteractiveSegmentResult:
     """One user message's supervisor inner loop (until CHAT, DONE, or guardrail)."""
 
     outcome: Literal["await_user", "session_exit_manager_cap"]
+    manager_reply: str = ""
 
 
 @dataclass
@@ -1100,8 +1101,18 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "explain why minimal preparation helps (or what raw-only would imply) before delegating cleaning with a narrow instruction.\n"
         "Use CHAT when you should answer the user conversationally without running a specialist — set reply_to_user to the "
         "full user-visible answer (markdown/plain text); instruction may be empty. "
-        "Use DONE when the user's request for this turn is satisfied or when stopping is appropriate; you may set reply_to_user "
-        "for a short closing note.\n"
+        "Use DONE when the user's request for this turn is satisfied. "
+        "reply_to_user is the ONLY text the user sees, so it must be a complete, self-contained answer.\n"
+        "DONE reply_to_user rules:\n"
+        "- Address ONLY the current user request. Do NOT repeat results from prior turns.\n"
+        "- Include the actual data: specific numbers, statistics, column names, shape, counts. "
+        "Convert raw Python dicts/output visible in chat history into readable markdown tables or lists.\n"
+        "- After the data, include a Key Findings section with your expert interpretation: "
+        "outliers, skewness, capped values, missing-data patterns, class imbalance, notable correlations, anomalies.\n"
+        "- If the specialist produced charts, mention what was plotted and key visual insights — "
+        "chart images are appended automatically, so do NOT include ![image] links.\n"
+        "- Do NOT give a generic one-liner like 'analysis complete'. The user needs the actual results and your observations.\n"
+        "- Use natural markdown formatting (tables, bullets, bold, paragraphs). Vary structure based on content.\n"
         "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
         "unless the user explicitly asks for a write-up or summary.\n"
     )
@@ -1227,6 +1238,7 @@ class DataAnalysisWorkflow:
         # Latest user intent for manager payload (stdin / HTTP); falls back to env batch prompt when empty.
         self.session_user_goal: str = ""
         self._dynamic_bootstrapped: bool = False
+        self._last_manager_reply: str = ""
 
     def _effective_user_goal(self, fallback: str) -> str:
         """Prefer session_user_goal (chat lines); else fallback (e.g. USER_ANALYSIS_PROMPT)."""
@@ -1280,6 +1292,95 @@ class DataAnalysisWorkflow:
             return
         self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
         self._validate_resume_brief_vs_kernel()
+
+    def generate_turn_summary(
+        self,
+        new_entries: List[Dict[str, Any]],
+        user_message: str,
+    ) -> str:
+        """Call Gemini to produce a human-readable summary of specialist outputs from this turn."""
+        if not new_entries:
+            return ""
+
+        _agent_noise_re = re.compile(
+            r"^\s*(?:Thought|Action|Action Input|Observation)\s*:.*$", re.MULTILINE
+        )
+
+        parts: List[str] = []
+        produced_charts = False
+        for entry in new_entries:
+            agent = entry.get("agent", "unknown")
+            excerpt = str(entry.get("output_excerpt", ""))[:4500]
+
+            if agent == "visualization":
+                produced_charts = True
+                cleaned = _agent_noise_re.sub("", excerpt).strip()
+                cleaned = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", cleaned).strip()
+                cleaned = re.sub(r"\[?\{[^}]*chart_path[^}]*\}\]?", "", cleaned).strip()
+                if cleaned:
+                    parts.append(f"--- {agent} ---\n{cleaned}")
+                else:
+                    parts.append(f"--- {agent} ---\nCharts were generated successfully.")
+            else:
+                parts.append(f"--- {agent} ---\n{excerpt}")
+        specialist_digest = "\n\n".join(parts)
+
+        chart_note = ""
+        if produced_charts:
+            chart_note = (
+                "\nNote: Chart images are displayed separately below your answer. "
+                "You may mention what charts were created but do NOT include "
+                "markdown image links, file paths, or JSON chart metadata.\n"
+            )
+
+        prompt = (
+            f"You are a senior data analyst. The user asked:\n\"{user_message}\"\n\n"
+            f"Specialist agents ran and produced these results:\n\n"
+            f"{specialist_digest}\n\n"
+            "Respond to the user naturally and directly — like a knowledgeable colleague "
+            "presenting findings after running an analysis.\n\n"
+            "YOUR ANSWER MUST HAVE TWO PARTS:\n\n"
+            "PART 1 — DATA & RESULTS:\n"
+            "- Present the actual numbers: statistics, counts, means, medians, percentages, "
+            "correlations, column names, shape, and any concrete findings.\n"
+            "- If the output contains descriptive statistics (count, mean, std, min, 25%, 50%, "
+            "75%, max), present them in a readable markdown table.\n"
+            "- If data cleaning was performed, state what was done AND the concrete result "
+            "(e.g. '373 duplicates removed', 'shape: (20640, 10)', '207 missing values imputed').\n"
+            "- NEVER say 'statistics were computed' without showing the actual values.\n\n"
+            "PART 2 — KEY FINDINGS & OBSERVATIONS (MANDATORY):\n"
+            "After presenting the data, you MUST include a '## Key Findings' section where you "
+            "interpret the results like an analyst would. Examples of observations:\n"
+            "- Columns with extreme ranges or large std relative to mean (possible outliers)\n"
+            "- Skewed distributions (mean far from median)\n"
+            "- Columns with capped/clipped values (e.g. max exactly at a round number)\n"
+            "- Missing data patterns and their implications\n"
+            "- Class imbalance in categorical columns\n"
+            "- Notable correlations or relationships between variables\n"
+            "- Any data quality concerns or anomalies\n"
+            "This section is what makes your answer valuable — the user can read tables themselves, "
+            "but they need YOUR expert interpretation of what the numbers mean.\n\n"
+            "FORMAT RULES:\n"
+            "- Convert raw Python dicts into readable markdown tables — do NOT drop data, "
+            "do NOT reproduce raw dict/repr syntax.\n"
+            "- Do NOT include markdown image links like ![alt](path).\n"
+            "- Do NOT include internal agent text (Thought:, Action:, Action Input:, Observation:).\n"
+            "- Start your answer directly — no preamble like 'Here is a summary'.\n"
+            f"{chart_note}"
+        )
+
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return ""
+
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            resp = model.generate_content(prompt)
+            return (resp.text or "").strip()
+        except Exception as e:
+            print(f"[SUMMARY] Failed to generate turn summary: {e}")
+            return ""
 
     def bootstrap_dynamic_supervisor_session(
         self,
@@ -1628,6 +1729,7 @@ class DataAnalysisWorkflow:
 
         if decision.next_agent == "DONE":
             note = (decision.reply_to_user or "").strip()
+            self._last_manager_reply = note
             if note:
                 block = f"\n[MANAGER]\n{note}\n"
                 _out(block)
@@ -1636,6 +1738,7 @@ class DataAnalysisWorkflow:
 
         if decision.next_agent == "CHAT":
             reply = (decision.reply_to_user or "").strip() or (decision.rationale or "").strip()
+            self._last_manager_reply = reply
             if reply:
                 block = f"\n[MANAGER]\n{reply}\n"
                 _out(block)
@@ -1794,6 +1897,7 @@ class DataAnalysisWorkflow:
         emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> InteractiveSegmentResult:
         """Inner supervisor loop for one user message (until CHAT, DONE, or guardrail)."""
+        self._last_manager_reply = ""
         while True:
             turn = self._dynamic_supervisor_single_turn(
                 user_prompt,
@@ -1808,10 +1912,16 @@ class DataAnalysisWorkflow:
                 emit=emit,
             )
             if turn == "exit_manager_cap":
-                return InteractiveSegmentResult(outcome="session_exit_manager_cap")
+                return InteractiveSegmentResult(
+                    outcome="session_exit_manager_cap",
+                    manager_reply=self._last_manager_reply,
+                )
             if turn == "continue":
                 continue
-            return InteractiveSegmentResult(outcome="await_user")
+            return InteractiveSegmentResult(
+                outcome="await_user",
+                manager_reply=self._last_manager_reply,
+            )
 
     def run_interactive_session(
         self,

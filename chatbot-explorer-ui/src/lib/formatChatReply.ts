@@ -119,8 +119,15 @@ function buildChartsSection(
   }
 
   if (vizExcerpt) {
-    lines.push(vizExcerpt);
-    lines.push("");
+    const cleaned = vizExcerpt
+      .replace(/^\s*(?:Thought|Action|Action Input|Observation)\s*:.*/gm, "")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (cleaned) {
+      lines.push(cleaned);
+      lines.push("");
+    }
     for (const u of urls) {
       lines.push(`![chart](${resolveArtifactUrl(u)})`);
       lines.push("");
@@ -150,19 +157,37 @@ export function formatChatReply(
   resolveArtifactUrl: (path: string) => string,
   options?: FormatChatReplyOptions,
 ): string {
-  const linesBlock = data.lines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
   const meta = `\n\n---\n_Outcome:_ \`${data.outcome}\` · _run_id:_ \`${data.run_id}\``;
-
-  const sections: string[] = [];
-  if (linesBlock) {
-    sections.push(linesBlock);
-  }
-
   const steps = data.specialist_steps ?? [];
   const urls = data.chart_urls ?? [];
 
   const vizStep = [...steps].reverse().find((s) => s.agent === "visualization");
   const vizExcerpt = vizStep?.excerpt?.trim() ?? "";
+
+  const rawManagerReply = (data.manager_reply ?? "").trim();
+
+  if (rawManagerReply) {
+    let cleanReply = rawManagerReply
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+      .replace(/^\s*(?:Thought|Action|Action Input|Observation)\s*:.*/gm, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    const sections: string[] = [cleanReply];
+
+    if (urls.length > 0) {
+      sections.push(buildChartsSection(urls, "", resolveArtifactUrl));
+    }
+
+    const raw = `${sections.join("\n\n")}${meta}`;
+    return prepareMarkdownForChat(raw, data.run_id);
+  }
+
+  const linesBlock = data.lines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
+  const sections: string[] = [];
+  if (linesBlock) {
+    sections.push(linesBlock);
+  }
 
   const otherSteps = steps.filter((s) => s.agent !== "visualization");
 

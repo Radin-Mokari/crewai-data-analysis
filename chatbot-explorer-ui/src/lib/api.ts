@@ -40,6 +40,8 @@ export type ChatResponse = {
   specialist_steps?: SpecialistStep[];
   /** Server paths like `/artifacts/{run_id}/charts/file.png` — use `resolveArtifactUrl` for img src. */
   chart_urls?: string[];
+  /** Human-readable markdown summary generated after specialists run. Primary content for the bot reply. */
+  manager_reply?: string;
 };
 
 export type ReportResponse = {
@@ -74,6 +76,7 @@ export type SupervisorStreamEvent =
   | { type: "specialist_start"; step: number; agent: string }
   | { type: "specialist_complete"; step: number; agent: string; excerpt: string }
   | { type: "manager_message"; text: string }
+  | { type: "manager_summary"; text: string }
   | { type: "guardrail"; message: string };
 
 export type PipelineStreamFinal = {

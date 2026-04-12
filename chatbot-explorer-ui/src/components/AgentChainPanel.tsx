@@ -28,6 +28,8 @@ function eventLabel(e: SupervisorStreamEvent): string {
       return `${e.agent} finished`;
     case "manager_message":
       return "Manager message";
+    case "manager_summary":
+      return "Generating summary";
     case "guardrail":
       return "Guardrail";
     default:
@@ -65,6 +67,8 @@ export default function AgentChainPanel({ events, loading = false, defaultOpen }
               <div className="flex items-start gap-2">
                 {e.type === "manager_decision" ? (
                   <Bot className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+                ) : e.type === "manager_summary" ? (
+                  <Bot className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-600" />
                 ) : e.type === "guardrail" ? (
                   <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-600" />
                 ) : e.type === "specialist_complete" ? (
@@ -82,7 +86,7 @@ export default function AgentChainPanel({ events, loading = false, defaultOpen }
                       {e.rationale ? `\nRationale: ${e.rationale}` : ""}
                     </pre>
                   )}
-                  {e.type === "manager_message" && (
+                  {(e.type === "manager_message" || e.type === "manager_summary") && (
                     <pre className="whitespace-pre-wrap break-words font-sans text-[11px] text-foreground/85">
                       {e.text}
                     </pre>
