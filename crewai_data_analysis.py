@@ -2341,7 +2341,8 @@ def main():
     try:
         from dotenv import load_dotenv
 
-        load_dotenv()
+        _root = Path(__file__).resolve().parent
+        load_dotenv(_root / ".env", encoding="utf-8-sig")
     except ImportError:
         pass
 

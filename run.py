@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 
 sys.setrecursionlimit(5000)
 
-load_dotenv()
+_REPO_ROOT = Path(__file__).resolve().parent
+load_dotenv(_REPO_ROOT / ".env", encoding="utf-8-sig")
 
 os.environ["CREWAI_LLM_MODEL"] = "gemini-2.5-flash"
 

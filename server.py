@@ -23,7 +23,20 @@ from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
 
-load_dotenv()
+_REPO_ROOT = Path(__file__).resolve().parent
+# utf-8-sig strips UTF-8 BOM so the first key is not "\ufeffGEMINI_API_KEY"
+load_dotenv(_REPO_ROOT / ".env", encoding="utf-8-sig")
+
+
+def _repo_relative_path(value: str) -> Path:
+    """Resolve env paths relative to the repo root (directory of server.py), not process cwd."""
+    raw = (value or "").strip()
+    if not raw:
+        return Path()
+    p = Path(raw)
+    if p.is_absolute():
+        return p.resolve()
+    return (_REPO_ROOT / p).resolve()
 
 
 def _cors_allow_origins() -> List[str]:
@@ -47,7 +60,8 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _output_dir_resolved() -> Path:
-    return Path(os.getenv("OUTPUT_DIR", "./analysis_results")).resolve()
+    raw = os.getenv("OUTPUT_DIR", "./analysis_results").strip() or "./analysis_results"
+    return _repo_relative_path(raw)
 
 
 def _safe_run_id(run_id: str) -> str:
@@ -65,15 +79,18 @@ def _run_artifacts_root(run_id: str) -> Path:
 def _build_workflow() -> Any:
     from crewai_data_analysis import DataAnalysisWorkflow
 
-    dataset_path = os.getenv("DATASET_PATH", "").strip()
-    output_dir = os.getenv("OUTPUT_DIR", "./analysis_results")
-    resume = (os.getenv("RESUME_RUN_DIR") or "").strip() or None
-    if not dataset_path:
+    dataset_raw = os.getenv("DATASET_PATH", "").strip()
+    output_raw = os.getenv("OUTPUT_DIR", "./analysis_results").strip() or "./analysis_results"
+    resume_raw = (os.getenv("RESUME_RUN_DIR") or "").strip() or None
+    if not dataset_raw:
         raise RuntimeError("DATASET_PATH is required")
-    if not Path(dataset_path).exists():
-        raise RuntimeError(f"Dataset not found: {dataset_path}")
+    dataset_path = _repo_relative_path(dataset_raw)
+    if not dataset_path.is_file():
+        raise RuntimeError(f"Dataset not found: {dataset_raw} (looked for {dataset_path})")
+    output_dir = str(_repo_relative_path(output_raw))
+    resume = str(_repo_relative_path(resume_raw)) if resume_raw else None
     return DataAnalysisWorkflow(
-        dataset_path=dataset_path,
+        dataset_path=str(dataset_path),
         output_dir=output_dir,
         resume_from=resume,
     )
