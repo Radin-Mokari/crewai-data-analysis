@@ -147,6 +147,60 @@ export type FormatChatReplyOptions = {
   omitSpecialistExcerpts?: boolean;
 };
 
+/** Strip agent-style lines / markdown images; if that removes everything, keep text with images stripped only. */
+function sanitizeManagerReply(raw: string): string {
+  const stripImages = (s: string) => s.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
+  let t = stripImages(raw)
+    .replace(/^\s*(?:Thought|Action|Action Input|Observation)\s*:.*/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (t.length > 0) return t;
+  return stripImages(raw).trim();
+}
+
+function normWs(s: string): string {
+  return s.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Server logs `[MANAGER]\n{reply}` while JSON also carries the same text in `manager_reply` — drop log duplicates.
+ */
+export function filterDuplicateManagerLogLines(lines: string[], managerReply: string): string[] {
+  const m = normWs(managerReply);
+  if (!m) return lines;
+  return lines.filter((raw) => {
+    const line = raw.trimEnd().trim();
+    if (!line.startsWith("[MANAGER]")) return true;
+    const body = line.replace(/^\[MANAGER\]\s*/i, "").trim();
+    const b = normWs(body);
+    if (!b) return false;
+    if (b === m) return false;
+    const prefix = 900;
+    if (b.length >= prefix && m.length >= prefix && b.slice(0, prefix) === m.slice(0, prefix)) return false;
+    return true;
+  });
+}
+
+function buildNonVisualizationSpecialistSection(
+  steps: Array<{ agent: string; excerpt: string }>,
+  opts?: { managerReply?: string },
+): string | null {
+  const mgr = (opts?.managerReply ?? "").trim();
+  const skipReporter =
+    mgr.length >= 1200 && /(^|\n)\s*#{1,6}\s/.test(mgr) && steps.some((s) => s.agent === "reporter");
+  const otherSteps = steps.filter((s) => s.agent !== "visualization" && !(skipReporter && s.agent === "reporter"));
+  if (otherSteps.length === 0) return null;
+  const parts = otherSteps.map((s) => {
+    const agent = s.agent || "specialist";
+    const ex = (s.excerpt || "").trim();
+    if (!ex) {
+      return `### ${agent}\n\n_(no excerpt)_`;
+    }
+    return `### ${agent}\n\n${ex}`;
+  });
+  return "## This turn: specialist output\n\n" + parts.join("\n\n");
+}
+
 /**
  * Formats POST /chat JSON into a single markdown string for ReactMarkdown.
  * Does not wrap specialist excerpts in code fences (so **bold** and # headings render).
@@ -165,42 +219,32 @@ export function formatChatReply(
   const vizExcerpt = vizStep?.excerpt?.trim() ?? "";
 
   const rawManagerReply = (data.manager_reply ?? "").trim();
+  const filteredLines = filterDuplicateManagerLogLines(data.lines ?? [], rawManagerReply);
+  const linesBlock = filteredLines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
+
+  const specialistBlock =
+    !options?.omitSpecialistExcerpts ? buildNonVisualizationSpecialistSection(steps, { managerReply: rawManagerReply }) : null;
+
+  const sections: string[] = [];
+  let cleanManager = "";
 
   if (rawManagerReply) {
-    let cleanReply = rawManagerReply
-      .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/^\s*(?:Thought|Action|Action Input|Observation)\s*:.*/gm, "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-
-    const sections: string[] = [cleanReply];
-
-    if (urls.length > 0) {
-      sections.push(buildChartsSection(urls, "", resolveArtifactUrl));
+    cleanManager = sanitizeManagerReply(rawManagerReply);
+    if (cleanManager) {
+      sections.push(cleanManager);
     }
-
-    const raw = `${sections.join("\n\n")}${meta}`;
-    return prepareMarkdownForChat(raw, data.run_id);
   }
 
-  const linesBlock = data.lines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
-  const sections: string[] = [];
   if (linesBlock) {
-    sections.push(linesBlock);
+    const dupLog =
+      cleanManager.length > 0 && normWs(linesBlock) === normWs(cleanManager);
+    if (!dupLog) {
+      sections.push(linesBlock);
+    }
   }
 
-  const otherSteps = steps.filter((s) => s.agent !== "visualization");
-
-  if (!options?.omitSpecialistExcerpts && otherSteps.length > 0) {
-    const parts = otherSteps.map((s) => {
-      const agent = s.agent || "specialist";
-      const ex = (s.excerpt || "").trim();
-      if (!ex) {
-        return `### ${agent}\n\n_(no excerpt)_`;
-      }
-      return `### ${agent}\n\n${ex}`;
-    });
-    sections.push("## This turn: specialist output\n\n" + parts.join("\n\n"));
+  if (specialistBlock) {
+    sections.push(specialistBlock);
   }
 
   if (urls.length > 0) {

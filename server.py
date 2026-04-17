@@ -53,7 +53,7 @@ _workflow: Optional[Any] = None
 _chat_lock = asyncio.Lock()
 
 # Max chars for specialist excerpts in POST /chat JSON; report body in POST /report.
-_CHAT_EXCERPT_MAX = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "4000"))
+_CHAT_EXCERPT_MAX = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "12000"))
 _REPORT_MARKDOWN_MAX = int(os.getenv("REPORT_MARKDOWN_MAX_CHARS", "200000"))
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")

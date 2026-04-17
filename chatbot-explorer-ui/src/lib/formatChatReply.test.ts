@@ -51,6 +51,66 @@ describe("formatChatReply helpers", () => {
     expect(md).toContain("/api/artifacts/20260101_120000/charts/c.png");
   });
 
+  it("formatChatReply keeps specialist + viz captions when manager_reply is set", () => {
+    const md = formatChatReply(
+      {
+        outcome: "await_user",
+        lines: [],
+        run_id: "r1",
+        manager_reply: "Here is the analysis summary.",
+        specialist_steps: [
+          { agent: "eda", excerpt: "stats" },
+          {
+            agent: "visualization",
+            excerpt: `[{"chart_path": "/r/c.png", "title": "Heat", "description": "x"}]`,
+          },
+        ],
+        chart_urls: ["/artifacts/r1/charts/c.png"],
+      },
+      (p) => `/api${p}`,
+    );
+    expect(md).toContain("analysis summary");
+    expect(md).toContain("### eda");
+    expect(md).toContain("#### Heat");
+  });
+
+  it("formatChatReply drops duplicate [MANAGER] log when manager_reply matches", () => {
+    const report = "# Report\n\nBody here.";
+    const md = formatChatReply(
+      {
+        outcome: "await_user",
+        lines: [`[MANAGER]\n${report}`],
+        run_id: "r1",
+        manager_reply: report,
+        specialist_steps: [{ agent: "eda", excerpt: "eda only" }],
+        chart_urls: [],
+      },
+      (p) => p,
+    );
+    expect(md.match(/# Report/g)?.length).toBe(1);
+    expect(md).toContain("### eda");
+  });
+
+  it("formatChatReply omits reporter excerpt when manager_reply is long markdown synthesis", () => {
+    const mgr = "# Executive Summary\n\n" + "x".repeat(1300);
+    const md = formatChatReply(
+      {
+        outcome: "await_user",
+        lines: [],
+        run_id: "r1",
+        manager_reply: mgr,
+        specialist_steps: [
+          { agent: "eda", excerpt: "eda out" },
+          { agent: "reporter", excerpt: "# Executive Summary\n\n(dup)" },
+        ],
+        chart_urls: [],
+      },
+      (p) => p,
+    );
+    expect(md).toContain("### eda");
+    expect(md).not.toContain("### reporter");
+  });
+
   it("formatChatReply omits specialist excerpts when omitSpecialistExcerpts", () => {
     const md = formatChatReply(
       {

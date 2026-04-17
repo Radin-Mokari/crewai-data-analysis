@@ -43,6 +43,8 @@ class SupervisorLoopState:
     repeat_streak: int = 0
     specialist_count: int = 0
     manager_invocations: int = 0
+    reporter_invocations: int = 0
+    cleaning_invocations: int = 0
 
 
 SupervisorSingleTurnOutcome = Literal[
@@ -1105,6 +1107,7 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "reply_to_user is the ONLY text the user sees, so it must be a complete, self-contained answer.\n"
         "DONE reply_to_user rules:\n"
         "- Address ONLY the current user request. Do NOT repeat results from prior turns.\n"
+        "- Put a blank line before every markdown pipe table (line starting with '|'); otherwise tables render as plain text.\n"
         "- Include the actual data: specific numbers, statistics, column names, shape, counts. "
         "Convert raw Python dicts/output visible in chat history into readable markdown tables or lists.\n"
         "- After the data, include a Key Findings section with your expert interpretation: "
@@ -1115,6 +1118,12 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "- Use natural markdown formatting (tables, bullets, bold, paragraphs). Vary structure based on content.\n"
         "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
         "unless the user explicitly asks for a write-up or summary.\n"
+        "Anti-loop rules:\n"
+        "- run_history_digest excerpts may be truncated for token limits (often with a truncation marker). "
+        "That is NOT evidence the specialist failed — do NOT re-delegate the same role solely because text ends mid-sentence.\n"
+        "- Do NOT route to reporter again after a successful reporter run in the same user turn unless the user explicitly asks "
+        "for a report revision; the full markdown is saved on disk for the UI /report endpoint.\n"
+        "- If df_clean already exists and cleaning has already run, avoid delegating cleaning again unless fixing a narrowly-scoped regression.\n"
     )
 
 
@@ -1131,7 +1140,14 @@ def format_run_history_digest(
     lines: List[str] = []
     for e in entries[-last_n:]:
         instr = str(e.get("instruction", ""))[:max_instruction_chars]
-        ex = str(e.get("output_excerpt", ""))[:max_excerpt_chars]
+        raw_ex = str(e.get("output_excerpt", ""))
+        if len(raw_ex) > max_excerpt_chars:
+            ex = (
+                raw_ex[:max_excerpt_chars]
+                + "\n[ ... excerpt truncated for supervisor context (token budget) ... ]"
+            )
+        else:
+            ex = raw_ex
         lines.append(
             f"- step {e.get('step')}: {e.get('agent')} — instruction: {instr}\n" f"  excerpt: {ex}"
         )
@@ -1310,7 +1326,8 @@ class DataAnalysisWorkflow:
         produced_charts = False
         for entry in new_entries:
             agent = entry.get("agent", "unknown")
-            excerpt = str(entry.get("output_excerpt", ""))[:4500]
+            cap = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "12000"))
+            excerpt = str(entry.get("output_excerpt", ""))[: max(4500, cap)]
 
             if agent == "visualization":
                 produced_charts = True
@@ -1637,8 +1654,9 @@ class DataAnalysisWorkflow:
     ) -> SupervisorSingleTurnOutcome:
         """One manager JSON decision: CHAT, DONE, guardrail stop, or one specialist Crew run."""
 
-        excerpt_cap = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "4000"))
-        instr_cap = min(8000, excerpt_cap * 2)
+        excerpt_cap = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "12000"))
+        store_cap = int(os.getenv("RUN_HISTORY_EXCERPT_MAX_CHARS", str(max(excerpt_cap, 16000))))
+        instr_cap = min(24_000, max(8000, excerpt_cap * 2))
 
         def _out(s: str) -> None:
             if log is not None:
@@ -1670,12 +1688,19 @@ class DataAnalysisWorkflow:
             self.manager_chat_records,
             run_output_dir=self.run_output_dir,
         )
-        digest = format_run_history_digest(self.run_history_dynamic)
+        digest = format_run_history_digest(
+            self.run_history_dynamic,
+            last_n=int(os.getenv("SUPERVISOR_DIGEST_LAST_N", "10")),
+            max_instruction_chars=int(os.getenv("SUPERVISOR_DIGEST_INSTRUCTION_CHARS", "800")),
+            max_excerpt_chars=int(os.getenv("SUPERVISOR_DIGEST_EXCERPT_CHARS", "4000")),
+        )
         eff_goal = self._effective_user_goal(user_prompt)
         user_payload = (
             f"user_goal:\n{eff_goal}\n\n"
             f"validate_state:\n{json.dumps(flags)}\n\n"
-            f"run_history_digest:\n{digest}\n"
+            f"run_history_digest:\n{digest}\n\n"
+            "CONTEXT_NOTE: Digest excerpts may be truncated for token limits (see marker). "
+            "Do not re-run a specialist solely because an excerpt ends mid-sentence if the step completed.\n"
         )
         if state.repeat_streak >= 2:
             user_payload += (
@@ -1710,6 +1735,33 @@ class DataAnalysisWorkflow:
                     "set TIME_INDEX_OK = True in globals() when done."
                 ),
                 rationale="guardrail_time_index",
+            )
+            na = decision.next_agent
+
+        max_rep = int(os.getenv("MAX_REPORTER_INVOCATIONS_PER_SEGMENT", "1"))
+        if decision.next_agent == "reporter" and state.reporter_invocations >= max_rep:
+            rd = str(self.run_output_dir)
+            decision = ManagerDecision(
+                next_agent="CHAT",
+                instruction="",
+                rationale="guardrail_reporter_cap",
+                reply_to_user=(
+                    "A full markdown report was already produced in this session. "
+                    f"The latest version is saved under your run folder (`{rd}`) — use **Reporter** in the UI or `POST /report` to refresh it. "
+                    "I will not launch another reporter specialist pass unless you explicitly ask for a **revised** report."
+                ),
+            )
+            na = decision.next_agent
+
+        max_clean = int(os.getenv("MAX_CLEANING_INVOCATIONS_PER_SEGMENT", "2"))
+        if decision.next_agent == "cleaning" and not df_clean_missing and state.cleaning_invocations >= max_clean:
+            decision = ManagerDecision(
+                next_agent="eda",
+                instruction=(
+                    "df_clean already exists — continue the full analysis (distributions, correlations, categorical summaries, "
+                    "outliers) without repeating preparation unless you are fixing a specific regression."
+                ),
+                rationale="guardrail_cleaning_cap",
             )
             na = decision.next_agent
 
@@ -1770,7 +1822,8 @@ class DataAnalysisWorkflow:
         else:
             state.repeat_streak = 0
         state.last_agent = decision.next_agent
-        if state.repeat_streak >= 5:
+        repeat_max = int(os.getenv("SAME_AGENT_REPEAT_MAX", "3"))
+        if state.repeat_streak >= repeat_max:
             if interactive_chat_breaks:
                 msg = "[GUARDRAIL] Same agent repeated — stopping this turn."
                 _out(msg)
@@ -1806,7 +1859,7 @@ class DataAnalysisWorkflow:
             task_key=task_key,
             extra_inputs={},
         )
-        excerpt = str(result)[:4500] if result is not None else ""
+        excerpt = (str(result) if result is not None else "")[:store_cap]
         _emit(
             {
                 "type": "specialist_complete",
@@ -1831,6 +1884,10 @@ class DataAnalysisWorkflow:
             "user",
             f"[Analysis step {step} | {decision.next_agent}]\n{excerpt}",
         )
+        if decision.next_agent == "reporter":
+            state.reporter_invocations += 1
+        if decision.next_agent == "cleaning":
+            state.cleaning_invocations += 1
         self._save_kernel_snapshot_safe()
         time.sleep(step_delay)
         return "continue"
@@ -1898,6 +1955,8 @@ class DataAnalysisWorkflow:
     ) -> InteractiveSegmentResult:
         """Inner supervisor loop for one user message (until CHAT, DONE, or guardrail)."""
         self._last_manager_reply = ""
+        state.reporter_invocations = 0
+        state.cleaning_invocations = 0
         while True:
             turn = self._dynamic_supervisor_single_turn(
                 user_prompt,
