@@ -224,6 +224,20 @@ def _run_chat_sync(
                 "excerpt": excerpt,
             }
         )
+
+    # Generate a turn summary when specialists ran but manager_reply is empty/short.
+    # This ensures the user always sees a substantive answer with actual data.
+    manager_reply = (seg.manager_reply or "").strip()
+    if new_entries and len(manager_reply) < 800:
+        try:
+            summary = wf.generate_turn_summary(new_entries, message)
+            if summary and len(summary) > len(manager_reply):
+                manager_reply = summary
+                if emit is not None:
+                    emit({"type": "manager_summary", "text": summary[:500] + ("…" if len(summary) > 500 else "")})
+        except Exception as exc:
+            print(f"[SERVER] Turn summary generation failed: {exc}")
+
     chart_urls: List[str] = []
     if charts_dir.is_dir():
         for p in sorted(charts_dir.glob("*.png"), key=lambda x: x.stat().st_mtime_ns):
@@ -236,7 +250,7 @@ def _run_chat_sync(
         "run_id": wf.run_id,
         "specialist_steps": specialist_steps,
         "chart_urls": chart_urls,
-        "manager_reply": seg.manager_reply or "",
+        "manager_reply": manager_reply,
     }
 
 

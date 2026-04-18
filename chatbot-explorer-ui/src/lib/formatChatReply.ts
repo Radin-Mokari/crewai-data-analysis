@@ -222,19 +222,16 @@ export function formatChatReply(
   const filteredLines = filterDuplicateManagerLogLines(data.lines ?? [], rawManagerReply);
   const linesBlock = filteredLines.map((l) => l.trimEnd()).filter(Boolean).join("\n\n");
 
-  const specialistBlock =
-    !options?.omitSpecialistExcerpts ? buildNonVisualizationSpecialistSection(steps, { managerReply: rawManagerReply }) : null;
-
   const sections: string[] = [];
-  let cleanManager = "";
+  const cleanManager = rawManagerReply ? sanitizeManagerReply(rawManagerReply) : "";
 
-  if (rawManagerReply) {
-    cleanManager = sanitizeManagerReply(rawManagerReply);
-    if (cleanManager) {
-      sections.push(cleanManager);
-    }
+  // The manager's reply is the primary unified response — it should contain
+  // data tables + observations woven together (like ChatGPT / Julius AI).
+  if (cleanManager) {
+    sections.push(cleanManager);
   }
 
+  // Log lines only if they add something the manager reply doesn't already cover.
   if (linesBlock) {
     const dupLog =
       cleanManager.length > 0 && normWs(linesBlock) === normWs(cleanManager);
@@ -243,10 +240,10 @@ export function formatChatReply(
     }
   }
 
-  if (specialistBlock) {
-    sections.push(specialistBlock);
-  }
+  // Specialist excerpts are visible in the collapsible AgentChainPanel —
+  // no need to duplicate them in the main message body.
 
+  // Charts rendered inline after the text.
   if (urls.length > 0) {
     sections.push(buildChartsSection(urls, vizExcerpt, resolveArtifactUrl));
   }

@@ -666,14 +666,22 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
 
 DYNAMIC_CORE_MODE = (
     "You operate in CORE MODE within a persistent Python kernel. "
+    "PRE-IMPORTED LIBRARIES (already available — do NOT re-import these): "
+    "pd (pandas), np (numpy), plt (matplotlib.pyplot), sns (seaborn), "
+    "matplotlib, Path (pathlib.Path), scipy.stats (import only if needed). "
     "CRITICAL RULES: "
     "1) NEVER call pd.read_csv() - data is pre-loaded in df_raw. "
-    "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
-    "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
+    "2) NEVER re-import pandas, numpy, matplotlib, seaborn — they are already loaded as pd, np, plt, sns. "
+    "3) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
+    "4) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
     "validation_report is a dict (never a list): use string keys for checks; "
     "validation_report.setdefault('messages', []).append('note') for free-form notes. "
-    "4) Output concise code, no conversational text. "
-    "5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
+    "5) Output concise code, no conversational text. "
+    "6) FINAL ANSWER FORMAT: Your Final Answer MUST include the ACTUAL output data from your code execution — "
+    "tables (use .to_markdown()), statistics, value counts, shapes, column lists, and any concrete results. "
+    "After the data, add brief factual observations about what the data shows. "
+    "Do NOT write a vague summary like 'statistics were computed'. The data itself IS your answer. "
+    "Do NOT include file paths, code blocks, or raw JSON in your Final Answer."
 )
 
 
@@ -864,8 +872,14 @@ def parse_manager_decision(text: str) -> Optional[ManagerDecision]:
     if m:
         raw = m.group(0)
     try:
-        return ManagerDecision.model_validate_json(raw)
-    except Exception:
+        import json
+        # Gemini often generates invalid JSON escapes like \| or \_ when writing markdown inside JSON.
+        # This regex double-escapes any backslash that is not followed by a valid JSON escape character.
+        sanitized_raw = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', raw)
+        data = json.loads(sanitized_raw, strict=False)
+        return ManagerDecision.model_validate(data)
+    except Exception as e:
+        print(f"[MANAGER PARSE ERROR] {e}\nRaw snippet: {raw[:1000]}")
         return None
 
 
@@ -879,7 +893,11 @@ def invoke_manager_decision(
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not set")
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash", system_instruction=system_instruction)
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash", 
+        system_instruction=system_instruction,
+        generation_config={"response_mime_type": "application/json"}
+    )
     full_prompt = chat_block + "\n\n---\n\n" + user_payload
     last_snippet = ""
     for attempt in range(3):
@@ -888,21 +906,17 @@ def invoke_manager_decision(
         decision = parse_manager_decision(text)
         if decision is not None:
             return decision
+        
+        # If it somehow fails even with forced JSON, just append the user prompt again
+        # DO NOT scold the LLM or it will apologize instead of answering.
         last_snippet = text[:1800]
-        full_prompt = (
-            "Return ONLY JSON: "
-            '{"next_agent":"...","instruction":"...","rationale":"...","reply_to_user":"..."} '
-            "reply_to_user is required when next_agent is CHAT (user-visible answer). "
-            "next_agent must be one of: cleaning, feature_engineering, class_imbalance, eda, visualization, "
-            "statistics, reporter, CHAT, DONE. No markdown.\nInvalid output:\n"
-            + last_snippet
-        )
+        full_prompt = chat_block + "\n\n---\n\n" + user_payload + "\n\nPlease output the JSON object."
     raise ValueError(f"Manager JSON parse failed after retries. Last snippet: {last_snippet}")
 
 
 def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
-    llm_medium = _make_gemini_llm(max_output_tokens=640, thinking_budget=256)
-    llm_long = _make_gemini_llm(max_output_tokens=1200, thinking_budget=512)
+    llm_medium = _make_gemini_llm(max_output_tokens=2048, thinking_budget=1024)
+    llm_long = _make_gemini_llm(max_output_tokens=4096, thinking_budget=2048)
     cm = DYNAMIC_CORE_MODE
 
     return {
@@ -913,7 +927,10 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
                 f"{cm} You absorb former pipeline steps: env check, structure summary, quality inspection, "
                 "validation_report population (keep validation_report as a dict; never assign validation_report = []), "
                 "and cleaning. For time-series data, set TIME_INDEX_OK = True only after "
-                "df_clean is sorted by the primary time column. INSPECTOR MODE on errors."
+                "df_clean is sorted by the primary time column. INSPECTOR MODE on errors. "
+                "In your Final Answer: include df_clean.shape, columns list, dtypes summary, "
+                "what was cleaned (duplicates removed, missing values handled, type conversions), "
+                "and any validation issues found. Use actual numbers."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -925,7 +942,9 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             goal="Create df_features from df_clean with ML-oriented transforms.",
             backstory=(
                 f"{cm} For time-indexed data: lags/rolling use past values only (no future leakage). Do not shuffle rows. "
-                "INSPECTOR MODE on errors."
+                "INSPECTOR MODE on errors. "
+                "In your Final Answer: include df_features.shape, list of new columns created, "
+                "transformations applied (encoding, scaling, etc.), and column-level summaries."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -937,7 +956,9 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             goal="Assess label distribution and imbalance using Core Mode columns.",
             backstory=(
                 f"{cm} Detect plausible targets without hardcoding. Use value_counts and ratios. "
-                "If labels are time-ordered, avoid suggesting random shuffles for balancing."
+                "If labels are time-ordered, avoid suggesting random shuffles for balancing. "
+                "In your Final Answer: include the value_counts table, imbalance ratios, "
+                "and factual observations about class distributions."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -948,8 +969,11 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             role="Exploratory Data Analysis Specialist",
             goal="EDA with codified plan then execution.",
             backstory=(
+                f"{cm} "
                 "CODIFIED PROMPTING: pseudocode plan first, then execute. "
-                "Use df_features if not None else df_clean else df_raw. INSPECTOR MODE."
+                "Use df_features if not None else df_clean else df_raw. INSPECTOR MODE. "
+                "Output structured findings: use markdown tables for distributions, correlations, value counts. "
+                "State factual findings only. Do NOT interpret or give recommendations — the manager does that."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -960,8 +984,12 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             role="Data Visualization Specialist",
             goal="Insightful charts from df_clean for interpretability.",
             backstory=(
+                f"{cm} "
                 "Analyze skew/cardinality/correlations before plotting. Prefer df_clean and ORIGINAL_* semantics. "
-                "For time series use line/trend-style plots when appropriate. DO NOT call plt.savefig(); tool handles it."
+                "For time series use line/trend-style plots when appropriate. DO NOT call plt.savefig(); tool handles it. "
+                "In your final answer: list each chart with its type and variables plotted. "
+                "Do NOT include file paths, image links, or raw JSON in your answer. "
+                "Do NOT interpret the charts — the manager provides observations."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -970,10 +998,14 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
         ),
         "statistics": Agent(
             role="Statistical Analysis Expert",
-            goal="Statistical tests with codified prompting.",
+            goal="Statistical tests with codified prompting. Output clean tables and test results.",
             backstory=(
-                "CODIFIED PLAN first, then execute. Verify columns exist. For time series, favor stationarity/autocorr checks "
-                "when relevant."
+                f"{cm} "
+                "CODIFIED PLAN first, then execute. Verify columns exist. "
+                "Use df.describe().T.to_markdown() for summary statistics — never list columns one by one. "
+                "For tests, output: test name, variables, statistic, p-value in a table. "
+                "State factual findings only. Do NOT interpret results or give recommendations — the manager does that. "
+                "Do NOT include file paths or chart paths in your final answer."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -1026,7 +1058,10 @@ def build_specialist_task(
     reporter_session_facts: Optional[str] = None,
     reporter_run_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Task:
-    core_mode_prefix = "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS. Do NOT read_csv.\n\n"
+    core_mode_prefix = (
+        "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS. Do NOT read_csv.\n"
+        "PRE-IMPORTED: pd, np, plt, sns, matplotlib, Path — do NOT re-import these.\n\n"
+    )
     ts_block = _ts_task_appendix(agent_id) if use_ts_appendix else ""
     header = (
         f"USER GOAL:\n{user_prompt}\n\n"
@@ -1037,26 +1072,73 @@ def build_specialist_task(
         desc = (
             header
             + core_mode_prefix
-            + "TASK: Full preparation — env check, schema/quality summary, populate validation_report, build df_clean; print shape."
+            + "TASK: Full preparation — env check, schema/quality summary, populate validation_report, build df_clean; print shape.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include:\n"
+            "- df_clean.shape (rows, columns)\n"
+            "- Column list with dtypes\n"
+            "- Missing values per column (if any)\n"
+            "- What was cleaned: duplicates removed, type conversions, missing value handling\n"
+            "- Any validation issues found\n"
+            "Use actual numbers. Do NOT write 'cleaning was performed' without showing what changed."
         )
     elif agent_id == "feature_engineering":
         desc = (
             header
             + core_mode_prefix
-            + "TASK: df_features from df_clean; encode/scale; update numeric/categoric column lists; summarize."
+            + "TASK: df_features from df_clean; encode/scale; update numeric/categoric column lists; summarize.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include:\n"
+            "- df_features.shape\n"
+            "- List of new columns created\n"
+            "- Transformations applied (encoding method, scaling method)\n"
+            "- Updated NUMERIC_COLUMNS and CATEGORICAL_COLUMNS lists\n"
+            "- Brief column-level summary using .describe() or .head() for new features"
         )
     elif agent_id == "class_imbalance":
         desc = (
             header
             + core_mode_prefix
-            + "TASK: Candidate targets via metadata; value_counts; imbalance metrics; recommendations."
+            + "TASK: Candidate targets via metadata; value_counts; imbalance metrics; recommendations.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include:\n"
+            "- Candidate target column(s) identified\n"
+            "- Value counts as a markdown table\n"
+            "- Imbalance ratios (majority/minority ratio)\n"
+            "- Factual observations about the class distribution"
         )
     elif agent_id == "eda":
-        desc = header + "CODIFIED EDA: plan then execute on best df_*."
+        desc = (
+            header
+            + core_mode_prefix
+            + "CODIFIED EDA: plan then execute on best df_*.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include:\n"
+            "- Key distributions as markdown tables (value counts, describe())\n"
+            "- Correlation findings (top correlated pairs with r values)\n"
+            "- Missing data summary if relevant\n"
+            "- Factual observations with specific numbers (shapes, counts, percentages)\n"
+            "Do NOT include file paths or chart paths."
+        )
     elif agent_id == "visualization":
-        desc = header + "SMART VIZ: 3–5 charts on df_clean using ORIGINAL_* where appropriate."
+        desc = (
+            header
+            + core_mode_prefix
+            + "SMART VIZ: 3–5 charts on df_clean using ORIGINAL_* where appropriate.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include for each chart:\n"
+            "- Chart type (histogram, scatter, boxplot, heatmap, etc.)\n"
+            "- Variables plotted\n"
+            "- What it shows factually (e.g. 'distribution of median_income', 'correlation heatmap of numeric features')\n"
+            "Do NOT include file paths, image links, or raw JSON in your answer — charts are served separately."
+        )
     elif agent_id == "statistics":
-        desc = header + "CODIFIED STATISTICS: plan then tests with dynamic columns."
+        desc = (
+            header
+            + core_mode_prefix
+            + "CODIFIED STATISTICS: plan then tests with dynamic columns.\n"
+            "OUTPUT FORMAT (STRICT):\n"
+            "1) Print df_clean.describe().T.to_markdown() for a clean statistics table\n"
+            "2) For each statistical test run, state: test name, variables, test statistic, p-value\n"
+            "3) State factual observations only (e.g. 'total_rooms has std 2181 vs mean 2635, indicating high variance')\n"
+            "4) Do NOT list every column's stats individually — use the describe() table\n"
+            "5) Do NOT include chart file paths in your answer — charts are served separately"
+        )
     elif agent_id == "reporter":
         desc = header + (manager_instruction or "Synthesize the final report.")
         blocks: List[str] = [desc, REPORTER_GROUNDING_RULES]
@@ -1072,11 +1154,20 @@ def build_specialist_task(
             blocks.append("COMPLETED ANALYSIS STEPS (verbatim excerpts — your only source for process details):\n" + digest)
         desc = "\n\n".join(blocks)
     else:
-        desc = header + core_mode_prefix + "Execute the manager instruction."
+        desc = (
+            header + core_mode_prefix
+            + "Execute the manager instruction.\n"
+            "OUTPUT FORMAT: Your Final Answer MUST include the actual output data from your code execution — "
+            "tables, statistics, results with specific numbers. No vague summaries."
+        )
 
     return Task(
         description=desc,
-        expected_output=f"Completed work for {agent_id} with concise summary.",
+        expected_output=(
+            f"The actual output data from {agent_id}'s code execution: "
+            "tables, statistics, counts, shapes, and concrete results in markdown format, "
+            "followed by brief factual observations. No vague summaries."
+        ),
         agent=agents[agent_id],
         async_execution=False,
     )
@@ -1095,6 +1186,15 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "Output ONLY valid JSON (no markdown) with keys: next_agent, instruction, rationale, reply_to_user (optional string). "
         "next_agent must be one of: cleaning, feature_engineering, class_imbalance, eda, visualization, statistics, "
         "reporter, CHAT, DONE. "
+        "SHARED ENVIRONMENT RULES: All specialists share the same Python kernel. "
+        "The following libraries are ALREADY imported and available to every specialist: "
+        "pd (pandas), np (numpy), plt (matplotlib.pyplot), sns (seaborn), matplotlib, Path (pathlib). "
+        "The following variables persist across steps: df_raw, df_clean, df_features, validation_report, "
+        "DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS. "
+        "When writing the 'instruction' field for the next specialist, always remind them: "
+        "(1) which libraries are already loaded (do NOT re-import pandas/numpy/matplotlib/seaborn), "
+        "(2) which DataFrames and variables already exist from previous steps (visible in run_history_digest), "
+        "so the specialist can use them directly without re-creating or re-importing anything.\n"
         "Respect NARROW user requests: if they ask for only one kind of work (only EDA, only visualization, only statistics, "
         "only feature engineering, only class_imbalance, only cleaning, only reporter), delegate to that specialist with a "
         "scoped instruction—do not run a full end-to-end pipeline unless they asked for comprehensive analysis.\n"
@@ -1103,22 +1203,23 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "explain why minimal preparation helps (or what raw-only would imply) before delegating cleaning with a narrow instruction.\n"
         "Use CHAT when you should answer the user conversationally without running a specialist — set reply_to_user to the "
         "full user-visible answer (markdown/plain text); instruction may be empty. "
-        "Use DONE when the user's request for this turn is satisfied. "
-        "reply_to_user is the ONLY text the user sees, so it must be a complete, self-contained answer.\n"
-        "DONE reply_to_user rules:\n"
-        "- Address ONLY the current user request. Do NOT repeat results from prior turns.\n"
-        "- Put a blank line before every markdown pipe table (line starting with '|'); otherwise tables render as plain text.\n"
-        "- Include the actual data: specific numbers, statistics, column names, shape, counts. "
-        "Convert raw Python dicts/output visible in chat history into readable markdown tables or lists.\n"
-        "- After the data, include a Key Findings section with your expert interpretation: "
-        "outliers, skewness, capped values, missing-data patterns, class imbalance, notable correlations, anomalies.\n"
-        "- If the specialist produced charts, mention what was plotted and key visual insights — "
-        "chart images are appended automatically, so do NOT include ![image] links.\n"
-        "- Do NOT give a generic one-liner like 'analysis complete'. The user needs the actual results and your observations.\n"
-        "- Use natural markdown formatting (tables, bullets, bold, paragraphs). Vary structure based on content.\n"
+        "Use DONE when the user's request for this turn is satisfied.\n"
+        "reply_to_user is the ONLY content the user sees in the chat. The specialist work is hidden behind a "
+        "collapsible 'thinking' panel. Your reply must be a COMPLETE, UNIFIED response.\n"
+        "When populating the reply_to_user field, you MUST follow these exact steps:\n"
+        "1. Write a brief 1-2 sentence introduction of what was done.\n"
+        "2. Directly embed the actual data from the specialist outputs: statistics, value counts, shapes, and metrics.\n"
+        "   - You MUST format this data as clean markdown tables.\n"
+        "   - You MUST place a blank line before every markdown pipe table.\n"
+        "3. After each data table, write your expert observations and interpretation of that specific data (patterns, outliers, skewness, missing data, anomalies).\n"
+        "4. If charts were produced, describe what they plot and their visual insights (do NOT include markdown image links like ![image]).\n"
+        "5. Conclude with recommendations or next steps.\n"
+        "Do NOT write a vague summary like 'statistics were computed' — you MUST include the actual numbers in your reply.\n"
+        "Do NOT repeat results from prior turns.\n"
         "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
         "unless the user explicitly asks for a write-up or summary.\n"
         "Anti-loop rules:\n"
+        "- NEVER copy the text starting with '[SYSTEM: older context summarized below]' or 'Here is a summary' into your reply_to_user. That is internal metadata, not your answer.\n"
         "- run_history_digest excerpts may be truncated for token limits (often with a truncation marker). "
         "That is NOT evidence the specialist failed — do NOT re-delegate the same role solely because text ends mid-sentence.\n"
         "- Do NOT route to reporter again after a successful reporter run in the same user turn unless the user explicitly asks "
@@ -1132,7 +1233,7 @@ def format_run_history_digest(
     last_n: int = 5,
     *,
     max_instruction_chars: int = 320,
-    max_excerpt_chars: int = 900,
+    max_excerpt_chars: int = 2000,
 ) -> str:
     """Compact step list for prompts. Supervisor uses short excerpts; reporter/report use larger limits."""
     if not entries:
@@ -1179,6 +1280,7 @@ REPORTER_GROUNDING_RULES = (
     "- Forbidden: substituting a different dataset (e.g. Ames Housing / SalePrice, telco churn, customer_id) if this run is another dataset.\n"
     "- If the digest does not state a figure, write 'not detailed in prior steps' — do not invent statistics.\n"
     "- Start with '# Executive Summary' and keep markdown factual and specific to this run.\n"
+    "- MUST USE MARKDOWN TABLES: You MUST present all statistics, value counts, correlations, and numerical findings as clean markdown tables. Do NOT write paragraphs describing numbers; put the numbers in tables and write brief observations below the tables.\n"
 )
 
 
@@ -1354,33 +1456,30 @@ class DataAnalysisWorkflow:
             f"You are a senior data analyst. The user asked:\n\"{user_message}\"\n\n"
             f"Specialist agents ran and produced these results:\n\n"
             f"{specialist_digest}\n\n"
-            "Respond to the user naturally and directly — like a knowledgeable colleague "
-            "presenting findings after running an analysis.\n\n"
-            "YOUR ANSWER MUST HAVE TWO PARTS:\n\n"
-            "PART 1 — DATA & RESULTS:\n"
+            "Your response is the ONLY content the user will see — the specialist work is behind a "
+            "collapsible panel. Write a COMPLETE unified answer, like ChatGPT Code Interpreter would.\n\n"
+            "YOUR ANSWER STRUCTURE:\n\n"
+            "1) BRIEF INTRO (1-2 sentences):\n"
+            "- State what was done.\n\n"
+            "2) DATA & RESULTS:\n"
             "- Present the actual numbers: statistics, counts, means, medians, percentages, "
             "correlations, column names, shape, and any concrete findings.\n"
-            "- If the output contains descriptive statistics (count, mean, std, min, 25%, 50%, "
-            "75%, max), present them in a readable markdown table.\n"
-            "- If data cleaning was performed, state what was done AND the concrete result "
-            "(e.g. '373 duplicates removed', 'shape: (20640, 10)', '207 missing values imputed').\n"
-            "- NEVER say 'statistics were computed' without showing the actual values.\n\n"
-            "PART 2 — KEY FINDINGS & OBSERVATIONS (MANDATORY):\n"
-            "After presenting the data, you MUST include a '## Key Findings' section where you "
-            "interpret the results like an analyst would. Examples of observations:\n"
+            "- Use clean markdown tables for tabular data.\n"
+            "- Put a blank line before every markdown pipe table.\n\n"
+            "3) KEY FINDINGS & OBSERVATIONS (woven in with the data):\n"
+            "After each data section, interpret the results:\n"
             "- Columns with extreme ranges or large std relative to mean (possible outliers)\n"
             "- Skewed distributions (mean far from median)\n"
-            "- Columns with capped/clipped values (e.g. max exactly at a round number)\n"
+            "- Columns with capped/clipped values\n"
             "- Missing data patterns and their implications\n"
             "- Class imbalance in categorical columns\n"
-            "- Notable correlations or relationships between variables\n"
-            "- Any data quality concerns or anomalies\n"
-            "This section is what makes your answer valuable — the user can read tables themselves, "
-            "but they need YOUR expert interpretation of what the numbers mean.\n\n"
+            "- Notable correlations or relationships\n\n"
+            "4) RECOMMENDATIONS (if relevant):\n"
+            "- Suggest next steps based on what you observed.\n\n"
             "FORMAT RULES:\n"
-            "- Convert raw Python dicts into readable markdown tables — do NOT drop data, "
-            "do NOT reproduce raw dict/repr syntax.\n"
+            "- Do NOT give a vague summary like 'statistics were computed'. Include ACTUAL numbers.\n"
             "- Do NOT include markdown image links like ![alt](path).\n"
+            "- Do NOT include file paths, raw JSON, or code blocks.\n"
             "- Do NOT include internal agent text (Thought:, Action:, Action Input:, Observation:).\n"
             "- Start your answer directly — no preamble like 'Here is a summary'.\n"
             f"{chart_note}"
@@ -2077,6 +2176,7 @@ class DataAnalysisWorkflow:
                     tasks=[task],
                     process=Process.sequential,
                     verbose=True,
+                    output_log_file=str(self.run_output_dir / "crew_logs.json"),
                 )
                 result = single_crew.kickoff(inputs=extra_inputs)
                 result_str = str(result)

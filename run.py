@@ -16,6 +16,7 @@ _REPO_ROOT = Path(__file__).resolve().parent
 load_dotenv(_REPO_ROOT / ".env", encoding="utf-8-sig")
 
 os.environ["CREWAI_LLM_MODEL"] = "gemini-2.5-flash"
+os.environ.setdefault("CREWAI_TRACING_ENABLED", "true")
 
 from crewai_data_analysis import DataAnalysisWorkflow
 
