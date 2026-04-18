@@ -930,8 +930,11 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             backstory=(
                 f"{cm} You absorb former pipeline steps: env check, structure summary, quality inspection, "
                 "validation_report population (keep validation_report as a dict; never assign validation_report = []), "
-                "and cleaning. For time-series data, set TIME_INDEX_OK = True only after "
-                "df_clean is sorted by the primary time column. INSPECTOR MODE on errors. "
+                "and cleaning. Perform cleaning based ON THE MANAGER'S INSTRUCTION. Only change column names "
+                "or data types if the manager explicitly requests it or if it is strictly necessary to fix invalid data. "
+                "For time-series data, set TIME_INDEX_OK = True only after df_clean is sorted by the primary time column. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "In your Final Answer: include df_clean.shape, columns list, dtypes summary, "
                 "what was cleaned (duplicates removed, missing values handled, type conversions), "
                 "and any validation issues found. Use actual numbers."
@@ -940,13 +943,16 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=5,
+            max_retry_limit=1,
         ),
         "feature_engineering": Agent(
             role="Feature Engineering Expert",
             goal="Create df_features from df_clean with ML-oriented transforms.",
             backstory=(
                 f"{cm} For time-indexed data: lags/rolling use past values only (no future leakage). Do not shuffle rows. "
-                "INSPECTOR MODE on errors. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "In your Final Answer: include df_features.shape, list of new columns created, "
                 "transformations applied (encoding, scaling, etc.), and column-level summaries."
             ),
@@ -954,6 +960,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=5,
+            max_retry_limit=1,
         ),
         "class_imbalance": Agent(
             role="Class Imbalance Analyst",
@@ -961,6 +969,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             backstory=(
                 f"{cm} Detect plausible targets without hardcoding. Use value_counts and ratios. "
                 "If labels are time-ordered, avoid suggesting random shuffles for balancing. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "In your Final Answer: include the value_counts table, imbalance ratios, "
                 "and factual observations about class distributions."
             ),
@@ -968,6 +978,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=4,
+            max_retry_limit=1,
         ),
         "eda": Agent(
             role="Exploratory Data Analysis Specialist",
@@ -975,7 +987,9 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             backstory=(
                 f"{cm} "
                 "CODIFIED PROMPTING: pseudocode plan first, then execute. "
-                "Use df_features if not None else df_clean else df_raw. INSPECTOR MODE. "
+                "Use df_features if not None else df_clean else df_raw. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "Output structured findings: use markdown tables for distributions, correlations, value counts. "
                 "State factual findings only. Do NOT interpret or give recommendations — the manager does that."
             ),
@@ -983,6 +997,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=8,
+            max_retry_limit=1,
         ),
         "visualization": Agent(
             role="Data Visualization Specialist",
@@ -991,6 +1007,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
                 f"{cm} "
                 "Analyze skew/cardinality/correlations before plotting. Prefer df_clean and ORIGINAL_* semantics. "
                 "For time series use line/trend-style plots when appropriate. DO NOT call plt.savefig(); tool handles it. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "In your final answer: list each chart with its type and variables plotted. "
                 "Do NOT include file paths, image links, or raw JSON in your answer. "
                 "Do NOT interpret the charts — the manager provides observations."
@@ -999,6 +1017,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=8,
+            max_retry_limit=1,
         ),
         "statistics": Agent(
             role="Statistical Analysis Expert",
@@ -1008,6 +1028,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
                 "CODIFIED PLAN first, then execute. Verify columns exist. "
                 "Use df.describe().T.to_markdown() for summary statistics — never list columns one by one. "
                 "For tests, output: test name, variables, statistic, p-value in a table. "
+                "If your code raises an error, fix the specific issue and try once more. "
+                "Do NOT re-run code that already succeeded. "
                 "State factual findings only. Do NOT interpret results or give recommendations — the manager does that. "
                 "Do NOT include file paths or chart paths in your final answer."
             ),
@@ -1015,6 +1037,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[executor_tool],
             verbose=True,
             allow_delegation=False,
+            max_iter=6,
+            max_retry_limit=1,
         ),
         "reporter": Agent(
             role="Technical Report Writer",
@@ -1027,6 +1051,8 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
             tools=[],
             verbose=True,
             allow_delegation=False,
+            max_iter=4,
+            max_retry_limit=1,
         ),
     }
 
@@ -2194,14 +2220,7 @@ class DataAnalysisWorkflow:
                     output_log_file=str(self.run_output_dir / "crew_logs.json"),
                 )
                 result = single_crew.kickoff(inputs=extra_inputs)
-                result_str = str(result)
-                if "Error" in result_str or "Traceback" in result_str:
-                    last_error = f"Task output indicates error: {result_str[:200]}"
-                    print(f"[RETRY] Detected error in {task_key}: {last_error}")
-                    if attempt <= max_retries:
-                        time.sleep(delay_seconds)
-                        continue
-                self.results[task_key] = result_str
+                self.results[task_key] = str(result)
                 return result
             except Exception as e:
                 last_error = repr(e)
