@@ -470,6 +470,33 @@ async def reset(body: ResetIn):
     return {"ok": True, "run_id": _workflow.run_id, "run_dir": str(_workflow.run_output_dir)}
 
 
+class RunCodeIn(BaseModel):
+    code: str
+
+
+@app.post("/run_code")
+async def run_code(body: RunCodeIn):
+    async with _chat_lock:
+        if _workflow is None:
+            raise HTTPException(status_code=503, detail="Workflow not initialized")
+        
+        def _exec_sync() -> Dict[str, Any]:
+            result_str = _workflow.executor._run(body.code)
+            return json.loads(result_str)
+
+        loop = asyncio.get_running_loop()
+        result_data = await loop.run_in_executor(None, _exec_sync)
+        
+        # Convert absolute paths to API artifact paths
+        charts = result_data.get("charts", [])
+        if charts:
+            urls = []
+            for path_str in charts:
+                filename = os.path.basename(path_str)
+                urls.append(f"/artifacts/{_workflow.run_id}/charts/{filename}")
+            result_data["charts"] = urls
+            
+        return result_data
 if __name__ == "__main__":
     host = os.getenv("SERVER_HOST", "127.0.0.1")
     port = int(os.getenv("SERVER_PORT", "8765"))

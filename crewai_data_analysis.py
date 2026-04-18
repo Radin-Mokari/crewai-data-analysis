@@ -203,6 +203,10 @@ def validate_core_state():
         import io
         import contextlib
 
+        if "_internal_code_history" not in self.session_globals:
+            self.session_globals["_internal_code_history"] = []
+        self.session_globals["_internal_code_history"].append(code)
+
         stdout_buffer = io.StringIO()
         try:
             with contextlib.redirect_stdout(stdout_buffer):
@@ -1814,13 +1818,15 @@ class DataAnalysisWorkflow:
 
         na = decision.next_agent
         if na not in ("DONE", "CHAT", "cleaning") and df_clean_missing:
-            decision = ManagerDecision(
-                next_agent="cleaning",
-                instruction=(
-                    "Run full preparation: env check, validation_report, and df_clean before other specialists."
-                ),
-                rationale="guardrail_df_clean_required",
-            )
+            if state.cleaning_invocations < int(os.getenv("MAX_CLEANING_INVOCATIONS_PER_SEGMENT", "2")):
+                decision = ManagerDecision(
+                    next_agent="cleaning",
+                    instruction=(
+                        "Run full preparation: env check, validation_report, and df_clean before other specialists."
+                    ),
+                    rationale="guardrail_df_clean_required",
+                )
+                na = decision.next_agent
             na = decision.next_agent
         if (
             self.brief_dict.get("is_time_series")
@@ -1958,6 +1964,13 @@ class DataAnalysisWorkflow:
             task_key=task_key,
             extra_inputs={},
         )
+        
+        agent_code = ""
+        g = self.executor.session_globals
+        if "_internal_code_history" in g and g["_internal_code_history"]:
+            agent_code = "\n\n".join(g["_internal_code_history"])
+            g["_internal_code_history"] = []
+            
         excerpt = (str(result) if result is not None else "")[:store_cap]
         _emit(
             {
@@ -1965,6 +1978,7 @@ class DataAnalysisWorkflow:
                 "step": step,
                 "agent": decision.next_agent,
                 "excerpt": excerpt[:excerpt_cap],
+                "agent_code": agent_code,
             }
         )
         post_flags = self.executor.validate_state()
@@ -1974,6 +1988,7 @@ class DataAnalysisWorkflow:
                 "agent": decision.next_agent,
                 "instruction": decision.instruction,
                 "output_excerpt": excerpt,
+                "agent_code": agent_code,
                 "state_flags": dict(post_flags),
             }
         )

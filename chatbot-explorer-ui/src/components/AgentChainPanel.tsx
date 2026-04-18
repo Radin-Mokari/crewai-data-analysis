@@ -6,8 +6,10 @@ import {
   Circle,
   Loader2,
   User,
+  Code2,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
 import type { SupervisorStreamEvent } from "@/lib/api";
 
 type Props = {
@@ -16,6 +18,7 @@ type Props = {
   loading?: boolean;
   /** Start expanded while loading; collapsed when done unless user opens */
   defaultOpen?: boolean;
+  onLoadCode?: (code: string) => void;
 };
 
 function eventLabel(e: SupervisorStreamEvent): string {
@@ -37,7 +40,7 @@ function eventLabel(e: SupervisorStreamEvent): string {
   }
 }
 
-export default function AgentChainPanel({ events, loading = false, defaultOpen }: Props) {
+export default function AgentChainPanel({ events, loading = false, defaultOpen, onLoadCode }: Props) {
   const open = defaultOpen !== undefined ? defaultOpen : loading;
   if (events.length === 0 && !loading) {
     return null;
@@ -79,7 +82,23 @@ export default function AgentChainPanel({ events, loading = false, defaultOpen }
                   <User className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
                 )}
                 <div className="min-w-0 flex-1 space-y-1">
-                  <div className="font-medium text-foreground/90">{eventLabel(e)}</div>
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-foreground/90">{eventLabel(e)}</div>
+                    {e.type === "specialist_complete" && e.agent_code && onLoadCode && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="h-5 px-2 text-[9px] gap-1 bg-accent/50 hover:bg-accent"
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          onLoadCode(e.agent_code!);
+                        }}
+                      >
+                        <Code2 className="h-3 w-3" />
+                        Load Code
+                      </Button>
+                    )}
+                  </div>
                   {e.type === "manager_decision" && (
                     <pre className="whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-foreground/80">
                       {e.instruction ? `Instruction: ${e.instruction}` : ""}

@@ -15,6 +15,7 @@ interface ChatMessageProps {
   wide?: boolean;
   /** Collapsible supervisor steps from SSE (chat/stream pipeline) */
   chain?: SupervisorStreamEvent[];
+  onLoadCode?: (code: string) => void;
 }
 
 function normalizeMarkdownImgSrc(src: string | undefined): string {
@@ -63,7 +64,7 @@ const mdTableComponents: Partial<Components> = {
   ),
 };
 
-const ChatMessage = ({ content, role, chipLabel, wide, chain }: ChatMessageProps) => {
+const ChatMessage = ({ content, role, chipLabel, wide, chain, onLoadCode }: ChatMessageProps) => {
   const isUser = role === "user";
   const botMarkdown = useMemo(() => wrapTabularPlaintextInFences(content), [content]);
 
@@ -96,7 +97,7 @@ const ChatMessage = ({ content, role, chipLabel, wide, chain }: ChatMessageProps
           ) : (
             <div className="space-y-3">
               {chain && chain.length > 0 && (
-                <AgentChainPanel events={chain} loading={false} defaultOpen={false} />
+                <AgentChainPanel events={chain} loading={false} defaultOpen={false} onLoadCode={onLoadCode} />
               )}
             <div
               className={[

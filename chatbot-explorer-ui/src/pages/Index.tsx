@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { AlertCircle, Bot, Loader2, PlayCircle } from "lucide-react";
+import { AlertCircle, Bot, Loader2, PlayCircle, Code2 } from "lucide-react";
 import { toast } from "sonner";
 import ChatMessage from "@/components/ChatMessage";
 import PromptIsland from "@/components/PromptIsland";
 import SessionsSidebar, { type Session } from "@/components/SessionsSidebar";
+import CodeEditorPanel from "@/components/CodeEditorPanel";
 import { Button } from "@/components/ui/button";
 import {
   ApiError,
@@ -68,6 +69,8 @@ const Index = () => {
   /** Live SSE events for the in-flight supervisor run (chat or full batch). */
   const [liveChain, setLiveChain] = useState<SupervisorStreamEvent[]>([]);
   const [supervisorStreamOpen, setSupervisorStreamOpen] = useState(false);
+  const [isCodeEditorOpen, setIsCodeEditorOpen] = useState(false);
+  const [editorCode, setEditorCode] = useState<string | undefined>(undefined);
   const chainAccRef = useRef<SupervisorStreamEvent[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -106,6 +109,11 @@ const Index = () => {
       ...prev,
       [sessionId]: [...(prev[sessionId] || []), ...newMsgs],
     }));
+  }, []);
+
+  const handleLoadCode = useCallback((code: string) => {
+    setEditorCode(code);
+    setIsCodeEditorOpen(true);
   }, []);
 
   const handleSend = useCallback(
@@ -368,6 +376,17 @@ const Index = () => {
               )}
               Full batch
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className={`h-8 gap-1.5 text-[11px] ${isCodeEditorOpen ? "bg-accent text-accent-foreground" : ""}`}
+              onClick={() => setIsCodeEditorOpen(!isCodeEditorOpen)}
+              title="Toggle interactive code editor"
+            >
+              <Code2 className="h-3.5 w-3.5" aria-hidden />
+              Code
+            </Button>
             {chatLoading && !pipelineLoading && (
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Chat loading" />
             )}
@@ -408,11 +427,12 @@ const Index = () => {
                 chipLabel={m.chipLabel}
                 wide={m.role === "bot"}
                 chain={m.chain}
+                onLoadCode={handleLoadCode}
               />
             ))}
             {/* Live supervisor steps belong after the latest user turn (same as Cursor-style streaming). */}
             {supervisorStreamOpen && (
-              <AgentChainPanel events={liveChain} loading={chatLoading || pipelineLoading} defaultOpen />
+              <AgentChainPanel events={liveChain} loading={chatLoading || pipelineLoading} defaultOpen onLoadCode={handleLoadCode} />
             )}
           </div>
         </div>
@@ -421,6 +441,21 @@ const Index = () => {
           <PromptIsland onSend={handleSend} disabled={busy || !backendOk} />
         </div>
       </div>
+
+      {isCodeEditorOpen && (
+        <div className="w-1/3 min-w-[350px] max-w-[600px] shrink-0 border-l border-border h-full bg-background z-10 transition-all">
+          <CodeEditorPanel 
+            code={editorCode ?? `# Interactive Python Session
+# The kernel retains state between runs.
+# Existing variables: df_raw, df_clean, df_features
+
+print("Current shape of df_raw:", df_raw.shape)
+`}
+            onChange={setEditorCode}
+            onClose={() => setIsCodeEditorOpen(false)} 
+          />
+        </div>
+      )}
     </div>
   );
 };

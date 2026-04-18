@@ -66,18 +66,13 @@ export type PipelineResponse = {
 
 /** SSE payloads from supervisor (before `final`). */
 export type SupervisorStreamEvent =
-  | {
-      type: "manager_decision";
-      next_agent: string;
-      instruction: string;
-      rationale?: string;
-      reply_to_user?: string | null;
-    }
+  | { type: "manager_decision"; instruction?: string; rationale?: string; next_agent: string }
   | { type: "specialist_start"; step: number; agent: string }
-  | { type: "specialist_complete"; step: number; agent: string; excerpt: string }
+  | { type: "specialist_complete"; step: number; agent: string; excerpt?: string; agent_code?: string }
   | { type: "manager_message"; text: string }
   | { type: "manager_summary"; text: string }
-  | { type: "guardrail"; message: string };
+  | { type: "guardrail"; message: string }
+  | { type: "heartbeat" };
 
 export type PipelineStreamFinal = {
   ok: boolean;
@@ -277,4 +272,26 @@ export async function postPipelineStream(
   });
   const { type: _t, ...rest } = fin;
   return rest as unknown as PipelineStreamFinal;
+}
+
+export interface RunCodeResponse {
+  success: boolean;
+  stdout: string;
+  error: string | null;
+  charts: string[];
+  state_flags?: Record<string, boolean>;
+}
+
+export async function postRunCode(code: string): Promise<RunCodeResponse> {
+  const url = resolveArtifactUrl("/run_code");
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new ApiError(txt, response.status);
+  }
+  return response.json();
 }
