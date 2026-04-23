@@ -64,7 +64,7 @@ export type PipelineResponse = {
   specialist_steps: number;
 };
 
-/** SSE payloads from supervisor (before `final`). */
+/** SSE payloads from supervisor (before `final`). Chain-of-thoughts events. */
 export type SupervisorStreamEvent =
   | { type: "manager_decision"; instruction?: string; rationale?: string; next_agent: string }
   | { type: "specialist_start"; step: number; agent: string }
@@ -73,6 +73,38 @@ export type SupervisorStreamEvent =
   | { type: "manager_summary"; text: string }
   | { type: "guardrail"; message: string }
   | { type: "heartbeat" };
+
+/**
+ * Infrastructure log events — a *separate* channel from `SupervisorStreamEvent`.
+ * These feed the Logs sidebar only and are NOT shown in chain-of-thoughts.
+ * No inputs/outputs/reasoning content — just "what happened" (agent started,
+ * task retry, guardrail, specialist failed, etc.).
+ */
+export type LogLevel = "info" | "warn" | "error";
+export type LogCategory =
+  | "workflow"
+  | "manager"
+  | "specialist"
+  | "task"
+  | "tool"
+  | "guardrail";
+
+export type LogEvent = {
+  type: "log";
+  ts: string;
+  level: LogLevel;
+  category: LogCategory;
+  event: string;
+  message: string;
+  agent?: string;
+  step?: number;
+  task?: string;
+  attempt?: number;
+  total?: number;
+  turn?: number;
+  outcome?: string;
+  next_agent?: string;
+};
 
 export type PipelineStreamFinal = {
   ok: boolean;
@@ -182,6 +214,7 @@ async function readSsePost(
   path: string,
   jsonBody: Record<string, unknown>,
   onEvent: (obj: Record<string, unknown>) => void,
+  onLog?: (log: LogEvent) => void,
 ): Promise<Record<string, unknown>> {
   const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await fetch(url, {
@@ -199,6 +232,20 @@ async function readSsePost(
   const decoder = new TextDecoder();
   let buf = "";
   let finalPayload: Record<string, unknown> | null = null;
+  const dispatch = (obj: Record<string, unknown>) => {
+    const t = obj.type;
+    if (t === "final") {
+      finalPayload = obj;
+    } else if (t === "error") {
+      throw new ApiError(String(obj.message ?? "Stream error"), 500);
+    } else if (t === "log") {
+      if (onLog) onLog(obj as unknown as LogEvent);
+      // Intentionally NOT forwarded to onEvent — chain-of-thoughts channel is
+      // kept unchanged. Log events feed the Logs sidebar only.
+    } else {
+      onEvent(obj);
+    }
+  };
   while (true) {
     const { done, value } = await reader.read();
     buf += decoder.decode(value ?? new Uint8Array(), { stream: !done });
@@ -206,30 +253,14 @@ async function readSsePost(
     buf = rest;
     for (const raw of events) {
       if (!raw || typeof raw !== "object") continue;
-      const obj = raw as Record<string, unknown>;
-      const t = obj.type;
-      if (t === "final") {
-        finalPayload = obj;
-      } else if (t === "error") {
-        throw new ApiError(String(obj.message ?? "Stream error"), 500);
-      } else {
-        onEvent(obj);
-      }
+      dispatch(raw as Record<string, unknown>);
     }
     if (done) break;
   }
   const { events: tailEvents } = parseSseBuffer(buf + "\n\n");
   for (const raw of tailEvents) {
     if (!raw || typeof raw !== "object") continue;
-    const obj = raw as Record<string, unknown>;
-    const t = obj.type;
-    if (t === "final") {
-      finalPayload = obj;
-    } else if (t === "error") {
-      throw new ApiError(String(obj.message ?? "Stream error"), 500);
-    } else {
-      onEvent(obj);
-    }
+    dispatch(raw as Record<string, unknown>);
   }
   if (!finalPayload) {
     throw new ApiError("Stream ended without final event", 500);
@@ -241,6 +272,7 @@ async function readSsePost(
 export async function postChatStream(
   body: { message: string; user_prompt?: string | null },
   onEvent: (evt: SupervisorStreamEvent) => void,
+  onLog?: (log: LogEvent) => void,
 ): Promise<ChatResponse> {
   const payload: Record<string, unknown> = {
     message: body.message,
@@ -248,9 +280,14 @@ export async function postChatStream(
   if (body.user_prompt != null && body.user_prompt !== "") {
     payload.user_prompt = body.user_prompt;
   }
-  const fin = await readSsePost("/chat/stream", payload, (obj) => {
-    onEvent(obj as unknown as SupervisorStreamEvent);
-  });
+  const fin = await readSsePost(
+    "/chat/stream",
+    payload,
+    (obj) => {
+      onEvent(obj as unknown as SupervisorStreamEvent);
+    },
+    onLog,
+  );
   const { type: _t, ...rest } = fin;
   return rest as unknown as ChatResponse;
 }
@@ -259,6 +296,7 @@ export async function postChatStream(
 export async function postPipelineStream(
   body: { user_prompt?: string | null; follow_ups?: string[] },
   onEvent: (evt: SupervisorStreamEvent) => void,
+  onLog?: (log: LogEvent) => void,
 ): Promise<PipelineStreamFinal> {
   const payload: Record<string, unknown> = {};
   if (body.user_prompt != null && String(body.user_prompt).trim() !== "") {
@@ -267,9 +305,14 @@ export async function postPipelineStream(
   if (body.follow_ups?.length) {
     payload.follow_ups = body.follow_ups.filter((s) => String(s).trim());
   }
-  const fin = await readSsePost("/pipeline/stream", payload, (obj) => {
-    onEvent(obj as unknown as SupervisorStreamEvent);
-  });
+  const fin = await readSsePost(
+    "/pipeline/stream",
+    payload,
+    (obj) => {
+      onEvent(obj as unknown as SupervisorStreamEvent);
+    },
+    onLog,
+  );
   const { type: _t, ...rest } = fin;
   return rest as unknown as PipelineStreamFinal;
 }

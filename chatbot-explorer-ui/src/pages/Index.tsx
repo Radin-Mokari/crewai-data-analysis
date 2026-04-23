@@ -3,7 +3,7 @@ import { AlertCircle, Bot, Loader2, PlayCircle, Code2 } from "lucide-react";
 import { toast } from "sonner";
 import ChatMessage from "@/components/ChatMessage";
 import PromptIsland from "@/components/PromptIsland";
-import SessionsSidebar, { type Session } from "@/components/SessionsSidebar";
+import LogsSidebar from "@/components/LogsSidebar";
 import CodeEditorPanel from "@/components/CodeEditorPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import {
   resolveArtifactUrl,
   type HealthResponse,
   type SupervisorStreamEvent,
+  type LogEvent,
 } from "@/lib/api";
 import AgentChainPanel from "@/components/AgentChainPanel";
 import { formatChatReply } from "@/lib/formatChatReply";
@@ -53,10 +54,8 @@ const CHIP_TO_INSTRUCTION: Record<string, string> = {
 const INITIAL_SESSION_ID = "1";
 
 const Index = () => {
-  const [sessions, setSessions] = useState<Session[]>([
-    { id: INITIAL_SESSION_ID, title: "Current analysis", date: "Today" },
-  ]);
-  const [activeSessionId, setActiveSessionId] = useState(INITIAL_SESSION_ID);
+  const [logs, setLogs] = useState<LogEvent[]>([]);
+  const [activeSessionId] = useState(INITIAL_SESSION_ID);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({
     [INITIAL_SESSION_ID]: [WELCOME],
   });
@@ -114,6 +113,14 @@ const Index = () => {
   const handleLoadCode = useCallback((code: string) => {
     setEditorCode(code);
     setIsCodeEditorOpen(true);
+  }, []);
+
+  const handleLog = useCallback((log: LogEvent) => {
+    setLogs((prev) => [...prev, log]);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
   }, []);
 
   const handleSend = useCallback(
@@ -197,6 +204,7 @@ const Index = () => {
             chainAccRef.current.push(evt);
             setLiveChain([...chainAccRef.current]);
           },
+          handleLog,
         );
         appendMessages(sid, [
           {
@@ -261,6 +269,7 @@ const Index = () => {
           chainAccRef.current.push(evt);
           setLiveChain([...chainAccRef.current]);
         },
+        handleLog,
       );
       appendMessages(sid, [
         {
@@ -298,49 +307,10 @@ const Index = () => {
     }
   }, [activeSessionId, appendMessages, backendOk, sessionGoals]);
 
-  const handleNewSession = () => {
-    const id = String(Date.now());
-    const newSession: Session = { id, title: "New chat", date: "Just now" };
-    setSessions((prev) => [newSession, ...prev]);
-    setMessagesMap((prev) => ({ ...prev, [id]: [WELCOME] }));
-    setActiveSessionId(id);
-  };
-
-  const handleDeleteSession = (id: string) => {
-    setSessionGoals((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setMessagesMap((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    setSessions((prev) => {
-      const filtered = prev.filter((s) => s.id !== id);
-      if (filtered.length === 0) {
-        const nid = String(Date.now());
-        setMessagesMap((m) => ({ ...m, [nid]: [WELCOME] }));
-        setActiveSessionId(nid);
-        return [{ id: nid, title: "New chat", date: "Just now" }];
-      }
-      if (id === activeSessionId) {
-        setActiveSessionId(filtered[0].id);
-      }
-      return filtered;
-    });
-  };
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <SessionsSidebar
-        sessions={sessions}
-        activeId={activeSessionId}
-        onSelect={setActiveSessionId}
-        onNew={handleNewSession}
-        onDelete={handleDeleteSession}
-      />
+      <LogsSidebar logs={logs} onClear={clearLogs} />
 
       <div className="flex flex-1 flex-col min-w-0">
         <header className="flex items-center gap-3 border-b border-border bg-card/50 px-5 py-3">

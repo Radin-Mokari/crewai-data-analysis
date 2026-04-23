@@ -27,6 +27,37 @@ import google.generativeai as genai
 from session_state_store import save_kernel_snapshot, try_load_kernel_snapshot
 
 
+def _emit_log(
+    emit: Optional[Callable[[Dict[str, Any]], None]],
+    level: str,
+    category: str,
+    event: str,
+    message: str = "",
+    **extra: Any,
+) -> None:
+    """Emit an infrastructure log event over the SSE stream.
+
+    Intentionally carries no inputs/outputs/reasoning-content — only the fact
+    that an operation started / finished / failed. Used to feed the Logs
+    sidebar in the UI; chain-of-thoughts is emitted via the existing event
+    types (manager_decision, specialist_*, etc.).
+    """
+    if emit is None:
+        return
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    payload: Dict[str, Any] = {
+        "type": "log",
+        "ts": ts,
+        "level": level,
+        "category": category,
+        "event": event,
+        "message": message,
+    }
+    if extra:
+        payload.update(extra)
+    emit(payload)
+
+
 @dataclass
 class InteractiveSegmentResult:
     """One user message's supervisor inner loop (until CHAT, DONE, or guardrail)."""
@@ -139,7 +170,7 @@ validation_report = {{}}  # dict: structured checks (string keys); optional note
 # These variables provide dynamic column awareness for all agents
 DATASET_COLUMNS = list(df_raw.columns)
 NUMERIC_COLUMNS = df_raw.select_dtypes(include=[_np.number]).columns.tolist()
-CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category']).columns.tolist()
+CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
 BOOLEAN_COLUMNS = df_raw.select_dtypes(include=['bool']).columns.tolist()
 DATASET_SHAPE = df_raw.shape
 DATASET_PATH = dataset_path
@@ -205,16 +236,32 @@ def validate_core_state():
 
         if "_internal_code_history" not in self.session_globals:
             self.session_globals["_internal_code_history"] = []
-        self.session_globals["_internal_code_history"].append(code)
+
+        tool_emit = self.session_globals.get("_log_emit")
+        _emit_log(tool_emit, "info", "tool", "invoke", "Python executor invoked")
 
         stdout_buffer = io.StringIO()
+        # Temporarily disable plt.close to ensure we capture all generated figures
+        _original_close = plt.close
+        plt.close = lambda *args, **kwargs: None
+
         try:
             with contextlib.redirect_stdout(stdout_buffer):
                 exec(code, self.session_globals)
             result["success"] = True
+            self.session_globals["_internal_code_history"].append(code)
         except Exception as e:
             result["error"] = repr(e)
             print("EXECUTOR ERROR:", repr(e))
+            _emit_log(
+                tool_emit,
+                "error",
+                "tool",
+                "error",
+                f"Python executor raised {type(e).__name__}",
+            )
+        finally:
+            plt.close = _original_close
 
         result["stdout"] = stdout_buffer.getvalue()
         stdout_buffer.close()
@@ -246,9 +293,7 @@ def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
     from crewai import LLM
 
     generation_config = {"max_output_tokens": max_output_tokens}
-    if thinking_budget > 0:
-        generation_config["thinking"] = {"budget_tokens": thinking_budget}
-
+    
     return LLM(
         model="gemini-2.5-flash",
         api_key=os.getenv("GEMINI_API_KEY"),
@@ -272,7 +317,8 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
         "2) Use DATASET_COLUMNS, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS for column names. "
         "3) Reference existing variables: df_raw, df_clean, df_features, validation_report. "
         "4) Output concise code, no conversational text. "
-        "5) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
+        "5) DO NOT call plt.savefig() or plt.close() - the tool captures and closes figures automatically. "
+        "6) FINAL ANSWER FORMAT: Return a 2-3 sentence summary of what was done, NOT the full code."
     )
 
     agents = {
@@ -386,7 +432,7 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
                 "STEP 2 - SELECT CHARTS based on insights, not fixed templates.\n"
                 "CRITICAL: Use df_clean (not df_features) for interpretable values.\n"
                 "Use ORIGINAL_NUMERIC_COLUMNS for original column names.\n"
-                "DO NOT call plt.savefig() - tool saves automatically."
+                "DO NOT call plt.savefig() or plt.close() - tool captures and closes figures automatically."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -578,7 +624,7 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
                 "STEP 1 - ANALYZE (execute this code first):\n"
                 "```\n"
                 "from scipy.stats import skew\n"
-                "df = df_clean if df_clean is not None else df_raw\n"
+                "df = df_features if df_features is not None else (df_clean if df_clean is not None else df_raw)\n"
                 "num_cols = ORIGINAL_NUMERIC_COLUMNS\n"
                 "cat_cols = ORIGINAL_CATEGORICAL_COLUMNS\n"
                 "\n"
@@ -605,7 +651,7 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
                 "- If cat_cols exist: grouped bar or violin plot\n\n"
                 "IMPORTANT: Use descriptive titles with column names. Example:\n"
                 "plt.title(f'Distribution of {col_name} (skewness: {skewness[col_name]:.2f})')\n\n"
-                "DO NOT call plt.savefig(). Create 3-5 insightful charts total."
+                "DO NOT call plt.savefig() or plt.close(). Create 3-5 insightful charts total."
             ),
             expected_output="Insightful charts selected based on data characteristics analysis.",
             agent=agents["visualizations"],
@@ -620,7 +666,7 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
                 "    from scipy import stats\n"
                 "    df = df_features if df_features is not None else (df_clean if df_clean is not None else df_raw)\n"
                 "    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
-                "    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()\n"
+                "    cat_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()\n"
                 "    \n"
                 "    # Test 1: Normality test on first numeric column\n"
                 "    if len(num_cols) >= 1:\n"
@@ -681,7 +727,12 @@ DYNAMIC_CORE_MODE = (
     "validation_report is a dict (never a list): use string keys for checks; "
     "validation_report.setdefault('messages', []).append('note') for free-form notes. "
     "5) Output concise code, no conversational text. "
-    "6) FINAL ANSWER FORMAT: Your Final Answer MUST include the ACTUAL output data from your code execution — "
+    "6) COLUMN LIST HYGIENE: Global lists (NUMERIC_COLUMNS, etc.) might be polluted by previous transformations. "
+    "ALWAYS verify column existence before use: `[c for c in NUMERIC_COLUMNS if c in df.columns]`. "
+    "When updating global lists, REASSIGN the full list — NEVER call `.remove(x)`. "
+    "If you must re-infer: `df.select_dtypes(include=['number']).columns.tolist()`. "
+    "7) PLOTTING: DO NOT call plt.savefig() or plt.close(). The tool captures figures only if they are left open. "
+    "8) FINAL ANSWER FORMAT: Your Final Answer MUST include the ACTUAL output data from your code execution — "
     "tables (use .to_markdown()), statistics, value counts, shapes, column lists, and any concrete results. "
     "After the data, add brief factual observations about what the data shows. "
     "Do NOT write a vague summary like 'statistics were computed'. The data itself IS your answer. "
@@ -701,7 +752,7 @@ class ManagerDecision(BaseModel):
         "CHAT",
         "DONE",
     ]
-    instruction: str = ""
+    instruction: Optional[str] = ""
     rationale: str = ""
     reply_to_user: Optional[str] = None  # Gemini often returns null; treat as "" everywhere
 
@@ -1534,6 +1585,7 @@ class DataAnalysisWorkflow:
         followup_messages: Optional[List[str]],
         *,
         seed_initial_chat: bool = True,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Agent]:
         """Brief, session meta, optional initial chat seed. Idempotent; follow-ups still appended if already bootstrapped."""
         if self._dynamic_bootstrapped:
@@ -1546,6 +1598,8 @@ class DataAnalysisWorkflow:
                 if t:
                     self._append_manager_chat_record("message", "user", f"User follow-up:\n{t}")
             return create_dynamic_specialist_agents(self.executor)
+        
+        _emit_log(emit, "info", "workflow", "bootstrap_start", "Bootstrapping supervisor session")
         if not self.brief_text:
             self.brief_text, self.brief_dict = compute_dataset_brief(self.executor, self.run_output_dir)
         self._validate_resume_brief_vs_kernel()
@@ -1798,15 +1852,25 @@ class DataAnalysisWorkflow:
                 emit(evt)
 
         state.manager_invocations += 1
+        _emit_log(
+            emit,
+            "info",
+            "manager",
+            "turn_start",
+            f"Manager turn {state.manager_invocations} begun",
+            turn=state.manager_invocations,
+        )
         if max_manager_turns > 0 and state.manager_invocations > max_manager_turns:
             if interactive_chat_breaks:
                 msg = "[GUARDRAIL] INTERACTIVE_MAX_MANAGER_TURNS exceeded — stopping interactive loop."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "manager_turn_cap", msg)
             else:
                 msg = "[GUARDRAIL] Stopping: INTERACTIVE_MAX_MANAGER_TURNS exceeded."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "manager_turn_cap", msg)
             return "exit_manager_cap"
 
         flags = self.executor.validate_state()
@@ -1836,11 +1900,22 @@ class DataAnalysisWorkflow:
                 "\nGUARDRAIL_HINT: The same specialist role was chosen repeatedly. "
                 "Pick a different next_agent, narrow the instruction, use CHAT to explain, or DONE if satisfied.\n"
             )
-        decision = invoke_manager_decision(
-            chat_block=chat_block,
-            user_payload=user_payload,
-            system_instruction=system_instruction,
-        )
+        _emit_log(emit, "info", "manager", "thinking", "Manager consulting LLM for next decision")
+        try:
+            decision = invoke_manager_decision(
+                chat_block=chat_block,
+                user_payload=user_payload,
+                system_instruction=system_instruction,
+            )
+        except Exception as _mgr_exc:
+            _emit_log(
+                emit,
+                "error",
+                "manager",
+                "decision_failed",
+                f"Manager decision failed: {type(_mgr_exc).__name__}",
+            )
+            raise
 
         na = decision.next_agent
         if na not in ("DONE", "CHAT", "cleaning") and df_clean_missing:
@@ -1909,6 +1984,14 @@ class DataAnalysisWorkflow:
                 ),
             }
         )
+        _emit_log(
+            emit,
+            "info",
+            "manager",
+            "decision",
+            f"Manager → {decision.next_agent}",
+            next_agent=decision.next_agent,
+        )
 
         if decision.next_agent == "DONE":
             note = (decision.reply_to_user or "").strip()
@@ -1917,6 +2000,7 @@ class DataAnalysisWorkflow:
                 block = f"\n[MANAGER]\n{note}\n"
                 _out(block)
                 _emit({"type": "manager_message", "text": block.strip()})
+            _emit_log(emit, "info", "workflow", "turn_end", "Turn ended: DONE", outcome="done")
             return "break_interactive" if interactive_chat_breaks else "done"
 
         if decision.next_agent == "CHAT":
@@ -1934,6 +2018,7 @@ class DataAnalysisWorkflow:
                 )
             state.repeat_streak = 0
             state.last_agent = None
+            _emit_log(emit, "info", "workflow", "turn_end", "Turn ended: CHAT reply", outcome="chat")
             time.sleep(step_delay)
             return "break_interactive" if interactive_chat_breaks else "continue"
 
@@ -1942,10 +2027,12 @@ class DataAnalysisWorkflow:
                 msg = "[GUARDRAIL] DYNAMIC_MAX_STEPS (specialist runs) reached — type /report or exit."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "specialist_step_cap", msg)
             else:
                 msg = "[GUARDRAIL] Stopping: DYNAMIC_MAX_STEPS (specialist runs) reached."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "specialist_step_cap", msg)
             return "exit_specialist_cap"
 
         if decision.next_agent == state.last_agent:
@@ -1959,10 +2046,12 @@ class DataAnalysisWorkflow:
                 msg = "[GUARDRAIL] Same agent repeated — stopping this turn."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "same_agent_repeat", msg)
             else:
                 msg = "[GUARDRAIL] Stopping: same agent repeated without progress."
                 _out(msg)
                 _emit({"type": "guardrail", "message": msg})
+                _emit_log(emit, "warn", "guardrail", "same_agent_repeat", msg)
             return "exit_repeat"
 
         state.specialist_count += 1
@@ -1984,11 +2073,21 @@ class DataAnalysisWorkflow:
         )
         task_key = f"dynamic_step_{step}_{decision.next_agent}"
         _emit({"type": "specialist_start", "step": step, "agent": decision.next_agent})
+        _emit_log(
+            emit,
+            "info",
+            "specialist",
+            "start",
+            f"Specialist {decision.next_agent} started (step {step})",
+            agent=decision.next_agent,
+            step=step,
+        )
         result = self._run_task_with_retry(
             agent=specialists[decision.next_agent],
             task=task,
             task_key=task_key,
             extra_inputs={},
+            emit=emit,
         )
         
         agent_code = ""
@@ -2006,6 +2105,20 @@ class DataAnalysisWorkflow:
                 "excerpt": excerpt[:excerpt_cap],
                 "agent_code": agent_code,
             }
+        )
+        _specialist_failed = str(result or "").startswith("Error after retries:")
+        _emit_log(
+            emit,
+            "error" if _specialist_failed else "info",
+            "specialist",
+            "failed" if _specialist_failed else "complete",
+            (
+                f"Specialist {decision.next_agent} failed after retries"
+                if _specialist_failed
+                else f"Specialist {decision.next_agent} completed"
+            ),
+            agent=decision.next_agent,
+            step=step,
         )
         post_flags = self.executor.validate_state()
         self.run_history_dynamic.append(
@@ -2065,6 +2178,7 @@ class DataAnalysisWorkflow:
             user_prompt,
             followup_messages,
             seed_initial_chat=True,
+            emit=emit,
         )
         self.run_supervisor_batch_loop(user_prompt, specialists, log=log, emit=emit)
 
@@ -2097,6 +2211,7 @@ class DataAnalysisWorkflow:
         self._last_manager_reply = ""
         state.reporter_invocations = 0
         state.cleaning_invocations = 0
+        _emit_log(emit, "info", "workflow", "segment_start", "User turn segment started")
         while True:
             turn = self._dynamic_supervisor_single_turn(
                 user_prompt,
@@ -2202,38 +2317,105 @@ class DataAnalysisWorkflow:
         max_retries: int = 2,
         delay_seconds: int = 4,
         extra_inputs: Optional[Dict[str, Any]] = None,
+        emit: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Any:
         """Run a Crew with retry on failure."""
         attempt = 0
         last_error = None
         extra_inputs = extra_inputs or {}
+        total_attempts = max_retries + 1
 
-        while attempt <= max_retries:
-            attempt += 1
-            try:
-                print(f"[RETRY] Running {task_key}, attempt {attempt}/{max_retries + 1}")
-                single_crew = Crew(
-                    agents=[agent],
-                    tasks=[task],
-                    process=Process.sequential,
-                    verbose=True,
-                    output_log_file=str(self.run_output_dir / "crew_logs.json"),
-                )
-                result = single_crew.kickoff(inputs=extra_inputs)
-                self.results[task_key] = str(result)
-                return result
-            except Exception as e:
-                last_error = repr(e)
-                print(f"[RETRY] Exception in {task_key}: {last_error}")
-                if attempt <= max_retries:
-                    time.sleep(delay_seconds)
-                    continue
+        # Route tool invocation logs through emit during this task run.
+        prev_tool_emit = self.executor.session_globals.get("_log_emit")
+        self.executor.session_globals["_log_emit"] = emit
+        try:
+            while attempt <= max_retries:
+                attempt += 1
+                try:
+                    print(f"[RETRY] Running {task_key}, attempt {attempt}/{total_attempts}")
+                    if attempt > 1:
+                        _emit_log(
+                            emit,
+                            "warn",
+                            "task",
+                            "retry",
+                            f"Retrying {task_key} (attempt {attempt}/{total_attempts})",
+                            task=task_key,
+                            attempt=attempt,
+                            total=total_attempts,
+                        )
+                    single_crew = Crew(
+                        agents=[agent],
+                        tasks=[task],
+                        process=Process.sequential,
+                        verbose=True,
+                        output_log_file=str(self.run_output_dir / "crew_logs.json"),
+                    )
+                    _emit_log(
+                        emit,
+                        "info",
+                        "specialist",
+                        "start",
+                        f"Specialist task {task_key} started",
+                        agent=agent.role,
+                        task=task_key,
+                    )
+                    if emit:
+                        emit({"type": "specialist_start", "step": 0, "agent": agent.role})
+                        
+                    result = single_crew.kickoff(inputs=extra_inputs)
+                    
+                    if emit:
+                        excerpt = (str(result) if result is not None else "")[:1200]
+                        emit({"type": "specialist_complete", "step": 0, "agent": agent.role, "excerpt": excerpt})
+                        
+                    _emit_log(
+                        emit,
+                        "info",
+                        "specialist",
+                        "complete",
+                        f"Specialist task {task_key} completed",
+                        agent=agent.role,
+                        task=task_key,
+                    )
+                    self.results[task_key] = str(result)
+                    return result
+                except Exception as e:
+                    last_error = repr(e)
+                    print(f"[RETRY] Exception in {task_key}: {last_error}")
+                    _emit_log(
+                        emit,
+                        "error",
+                        "task",
+                        "attempt_failed",
+                        f"Attempt {attempt}/{total_attempts} failed: {type(e).__name__}",
+                        task=task_key,
+                        attempt=attempt,
+                        total=total_attempts,
+                    )
+                    if attempt <= max_retries:
+                        time.sleep(delay_seconds)
+                        continue
 
-        self.results[task_key] = f"Error after retries: {last_error}"
-        return self.results[task_key]
+            _emit_log(
+                emit,
+                "error",
+                "task",
+                "retry_exhausted",
+                f"All {total_attempts} attempts failed for {task_key}",
+                task=task_key,
+                total=total_attempts,
+            )
+            self.results[task_key] = f"Error after retries: {last_error}"
+            return self.results[task_key]
+        finally:
+            if prev_tool_emit is None:
+                self.executor.session_globals.pop("_log_emit", None)
+            else:
+                self.executor.session_globals["_log_emit"] = prev_tool_emit
 
 
-    def run_sequential_pipeline(self) -> Dict[str, Any]:
+    def run_sequential_pipeline(self, emit: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         print(f"\n{'='*70}")
         print("STARTING SEQUENTIAL DATA ANALYSIS PIPELINE (STATEFUL)")
         print(f"Dataset: {self.dataset_path}")
@@ -2267,6 +2449,7 @@ class DataAnalysisWorkflow:
                 task=task,
                 task_key=task_key,
                 extra_inputs={},
+                emit=emit,
             )
             print(f"[PHASE 1 - Task {i}/{len(prep_order)}] [OK] Completed (or max retries reached)")
 
@@ -2300,6 +2483,7 @@ class DataAnalysisWorkflow:
                 task=task,
                 task_key=task_key,
                 extra_inputs={},
+                emit=emit,
             )
             print(f"[PHASE 2 - Task {i}/{len(analysis_order)}] [OK] Completed (or max retries reached)")
 
