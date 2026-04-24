@@ -116,7 +116,13 @@ const Index = () => {
   }, []);
 
   const handleLog = useCallback((log: LogEvent) => {
-    setLogs((prev) => [...prev, log]);
+    setLogs((prev) => {
+      const next = [...prev, log];
+      if (next.length > 1000) {
+        return next.slice(next.length - 1000);
+      }
+      return next;
+    });
   }, []);
 
   const clearLogs = useCallback(() => {
@@ -152,9 +158,9 @@ const Index = () => {
           const content =
             md && md.length > 0
               ? prepareMarkdownForChat(
-                  (rep.truncated ? "_Report truncated for display._\n\n" : "") + md,
-                  rid,
-                )
+                (rep.truncated ? "_Report truncated for display._\n\n" : "") + md,
+                rid,
+              )
               : `**Report generated.** Markdown saved under the run folder.\n\n\`${rep.run_dir}\``;
           appendMessages(sid, [
             {
@@ -201,6 +207,7 @@ const Index = () => {
             user_prompt: lockedGoal,
           },
           (evt) => {
+            if (evt.type === "heartbeat") return;
             chainAccRef.current.push(evt);
             setLiveChain([...chainAccRef.current]);
           },
@@ -242,10 +249,10 @@ const Index = () => {
     const sessionGoal = sessionGoals[sid]?.trim();
     const ok = window.confirm(
       "Run the full dynamic supervisor batch now? The manager will keep routing specialists until DONE, a guardrail triggers, or DYNAMIC_MAX_STEPS is reached. " +
-        "This often takes many minutes. HTTP interactive state resets afterward (your next chat message starts a fresh supervisor loop; same Python session and data).\n\n" +
-        (sessionGoal
-          ? `Goal for this run: ${sessionGoal.slice(0, 200)}${sessionGoal.length > 200 ? "…" : ""}`
-          : "No session goal in this chat yet — the server will use USER_ANALYSIS_PROMPT from .env if set, or the request will fail."),
+      "This often takes many minutes. HTTP interactive state resets afterward (your next chat message starts a fresh supervisor loop; same Python session and data).\n\n" +
+      (sessionGoal
+        ? `Goal for this run: ${sessionGoal.slice(0, 200)}${sessionGoal.length > 200 ? "…" : ""}`
+        : "No session goal in this chat yet — the server will use USER_ANALYSIS_PROMPT from .env if set, or the request will fail."),
     );
     if (!ok) return;
 
@@ -266,6 +273,7 @@ const Index = () => {
           user_prompt: sessionGoal || undefined,
         },
         (evt) => {
+          if (evt.type === "heartbeat") return;
           chainAccRef.current.push(evt);
           setLiveChain([...chainAccRef.current]);
         },
@@ -289,7 +297,7 @@ const Index = () => {
           setHealth(h);
           setHealthLoadError(null);
         })
-        .catch(() => {});
+        .catch(() => { });
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e);
       toast.error(msg);
@@ -414,7 +422,7 @@ const Index = () => {
 
       {isCodeEditorOpen && (
         <div className="w-1/3 min-w-[350px] max-w-[600px] shrink-0 border-l border-border h-full bg-background z-10 transition-all">
-          <CodeEditorPanel 
+          <CodeEditorPanel
             code={editorCode ?? `# Interactive Python Session
 # The kernel retains state between runs.
 # Existing variables: df_raw, df_clean, df_features
@@ -422,7 +430,7 @@ const Index = () => {
 print("Current shape of df_raw:", df_raw.shape)
 `}
             onChange={setEditorCode}
-            onClose={() => setIsCodeEditorOpen(false)} 
+            onClose={() => setIsCodeEditorOpen(false)}
           />
         </div>
       )}

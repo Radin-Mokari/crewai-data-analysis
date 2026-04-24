@@ -44,18 +44,27 @@ def _emit_log(
     """
     if emit is None:
         return
-    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-    payload: Dict[str, Any] = {
-        "type": "log",
-        "ts": ts,
-        "level": level,
-        "category": category,
-        "event": event,
-        "message": message,
-    }
-    if extra:
-        payload.update(extra)
-    emit(payload)
+    try:
+        ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        payload: Dict[str, Any] = {
+            "type": "log",
+            "ts": ts,
+            "level": level,
+            "category": category,
+            "event": event,
+            "message": str(message),
+        }
+        if extra:
+            for k, v in extra.items():
+                try:
+                    # Deep copy and ensure serializable
+                    payload[k] = json.loads(json.dumps(v))
+                except:
+                    payload[k] = str(v)
+        emit(payload)
+    except Exception as e:
+        # Don't crash the entire loop if one log fails
+        print(f"[LOG_EMIT_ERROR] {e}")
 
 
 @dataclass

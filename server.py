@@ -297,43 +297,63 @@ async def chat(body: ChatIn):
 @app.post("/chat/stream")
 async def chat_stream(body: ChatIn):
     """Server-Sent Events: supervisor events, then `final` with same JSON shape as POST /chat."""
-    async with _chat_lock:
-        if _workflow is None:
-            raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
-        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
-        if not up:
-            raise HTTPException(
-                status_code=400,
-                detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
-            )
-        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
-
-        def work() -> None:
-            try:
-                result = _run_chat_sync(body.message.strip(), up, emit=q.put)
-                q.put({"type": "final", **result})
-            except Exception as e:
-                q.put({"type": "error", "message": str(e)})
-            finally:
-                q.put(None)
-
-        async def event_gen():
-            asyncio.get_running_loop().run_in_executor(None, work)
-            while True:
-                item = await asyncio.to_thread(q.get)
-                if item is None:
-                    break
-                yield _sse_data_line(item)
-
-        return StreamingResponse(
-            event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+    if _workflow is None:
+        raise HTTPException(status_code=503, detail="Workflow not initialized — check DATASET_PATH")
+    up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or body.message.strip() or "").strip()
+    if not up:
+        raise HTTPException(
+            status_code=400,
+            detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
         )
+    
+    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+
+    def work() -> None:
+        try:
+            result = _run_chat_sync(body.message.strip(), up, emit=q.put)
+            q.put({"type": "final", **result})
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)
+
+    async def event_gen():
+        # Hold the chat lock for the ENTIRE duration of the stream to prevent concurrent state mutation
+        async with _chat_lock:
+            loop = asyncio.get_running_loop()
+            # Start the synchronous workflow in a separate thread
+            work_fut = loop.run_in_executor(None, work)
+            
+            try:
+                while True:
+                    try:
+                        # Wait for an event from the queue with a timeout for heartbeats
+                        # 15s is safe for most proxies/browsers
+                        item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=15.0)
+                        if item is None:
+                            break
+                        yield _sse_data_line(item)
+                    except asyncio.TimeoutError:
+                        # Send a heartbeat to keep the TCP/HTTP connection open
+                        yield _sse_data_line({"type": "heartbeat"})
+                
+                # Ensure the background thread is fully finished
+                await work_fut
+            except asyncio.CancelledError:
+                # If the client disconnects, we still want to finish the work thread 
+                # (since it's non-cancellable Python code) to leave the state consistent.
+                # The lock will be released when this generator is fully closed.
+                pass
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class PipelineIn(BaseModel):
@@ -387,52 +407,64 @@ async def run_pipeline(body: PipelineIn):
 @app.post("/pipeline/stream")
 async def run_pipeline_stream(body: PipelineIn):
     """SSE: supervisor events for full batch, then `final` with ok, run_id, specialist_steps, lines."""
-    async with _chat_lock:
-        if _workflow is None:
-            raise HTTPException(status_code=503, detail="Workflow not initialized")
-        up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
-        if not up:
-            raise HTTPException(
-                status_code=400,
-                detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
-            )
-        q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
-        log_lines: List[str] = []
-
-        def work() -> None:
-            try:
-                result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
-                q.put(
-                    {
-                        "type": "final",
-                        "ok": result["ok"],
-                        "run_id": result["run_id"],
-                        "specialist_steps": result["specialist_steps"],
-                        "lines": list(log_lines),
-                    }
-                )
-            except Exception as e:
-                q.put({"type": "error", "message": str(e)})
-            finally:
-                q.put(None)
-
-        async def event_gen():
-            asyncio.get_running_loop().run_in_executor(None, work)
-            while True:
-                item = await asyncio.to_thread(q.get)
-                if item is None:
-                    break
-                yield _sse_data_line(item)
-
-        return StreamingResponse(
-            event_gen(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
+    if _workflow is None:
+        raise HTTPException(status_code=503, detail="Workflow not initialized")
+    up = (body.user_prompt or os.getenv("USER_ANALYSIS_PROMPT") or "").strip()
+    if not up:
+        raise HTTPException(
+            status_code=400,
+            detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
         )
+    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+    log_lines: List[str] = []
+
+    def work() -> None:
+        try:
+            result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
+            q.put(
+                {
+                    "type": "final",
+                    "ok": result["ok"],
+                    "run_id": result["run_id"],
+                    "specialist_steps": result["specialist_steps"],
+                    "lines": list(log_lines),
+                }
+            )
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)
+
+    async def event_gen():
+        # Hold the chat lock for the ENTIRE duration of the full batch pipeline
+        async with _chat_lock:
+            loop = asyncio.get_running_loop()
+            work_fut = loop.run_in_executor(None, work)
+            
+            try:
+                while True:
+                    try:
+                        item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=15.0)
+                        if item is None:
+                            break
+                        yield _sse_data_line(item)
+                    except asyncio.TimeoutError:
+                        yield _sse_data_line({"type": "heartbeat"})
+                
+                await work_fut
+            except asyncio.CancelledError:
+                # Keep state consistent even if browser tab closes
+                pass
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 def _report_sync() -> Dict[str, Any]:
