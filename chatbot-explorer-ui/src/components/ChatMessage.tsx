@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Components } from "react-markdown";
-import { Bot, User } from "lucide-react";
+import { Bot, User, Download } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AgentChainPanel from "@/components/AgentChainPanel";
@@ -143,15 +143,31 @@ const ChatMessage = ({ content, role, chipLabel, wide, chain, onLoadCode }: Chat
                       </code>
                     );
                   },
-                  img: ({ src, alt, ...rest }) => (
-                    <img
-                      {...rest}
-                      src={normalizeMarkdownImgSrc(typeof src === "string" ? src : undefined)}
-                      alt={alt ?? ""}
-                      className="rounded-md max-h-[min(70vh,520px)] w-auto border border-border/60"
-                      loading="lazy"
-                    />
-                  ),
+                  img: ({ src, alt, ...rest }) => {
+                    const imgSrc = normalizeMarkdownImgSrc(typeof src === "string" ? src : undefined);
+                    const downloadUrl = imgSrc ? `${imgSrc}${imgSrc.includes("?") ? "&" : "?"}download=1` : "#";
+                    return (
+                      <div className="group relative my-4 inline-block max-w-full overflow-hidden rounded-md border border-border/60">
+                        <img
+                          {...rest}
+                          src={imgSrc}
+                          alt={alt ?? ""}
+                          className="max-h-[min(70vh,520px)] w-auto"
+                          loading="lazy"
+                        />
+                        <div className="absolute right-2 top-2 translate-y-1 opacity-0 transition-all group-hover:translate-y-0 group-hover:opacity-100">
+                          <a
+                            href={downloadUrl}
+                            download
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-black/50 text-white backdrop-blur-sm hover:bg-black/70"
+                            title="Download chart"
+                          >
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  },
                 }}
               >
                 {botMarkdown}

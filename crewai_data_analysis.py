@@ -241,8 +241,12 @@ def validate_core_state():
         _emit_log(tool_emit, "info", "tool", "invoke", "Python executor invoked")
 
         stdout_buffer = io.StringIO()
-        # Temporarily disable plt.close to ensure we capture all generated figures
         _original_close = plt.close
+        
+        # Ensure a clean state before starting
+        plt.close('all')
+        
+        # Disable plt.close during execution so we can capture all figures at the end
         plt.close = lambda *args, **kwargs: None
 
         try:
@@ -266,13 +270,31 @@ def validate_core_state():
         result["stdout"] = stdout_buffer.getvalue()
         stdout_buffer.close()
 
+        import hashlib
         charts = []
+        existing_hashes = set()
+
+        # Restore original close for cleanup
+        plt.close = _original_close
+
         for fig_num in plt.get_fignums():
             fig = plt.figure(fig_num)
-            chart_path = Path(self.output_dir) / f"chart_{int(time.time() * 1000)}_{fig_num}.png"
-            fig.savefig(chart_path, dpi=100, bbox_inches="tight")
-            charts.append(str(chart_path))
-            plt.close(fig)
+            # Capture figure to buffer to check for duplicates
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100, bbox_inches="tight")
+            img_data = buf.getvalue()
+            img_hash = hashlib.md5(img_data).hexdigest()
+
+            if img_hash not in existing_hashes:
+                existing_hashes.add(img_hash)
+                chart_path = Path(self.output_dir) / f"chart_{int(time.time() * 1000)}_{fig_num}.png"
+                with open(chart_path, "wb") as f:
+                    f.write(img_data)
+                charts.append(str(chart_path))
+
+        # Final aggressive cleanup
+        plt.close('all')
+
         result["charts"] = charts
 
         result["state_flags"] = self.validate_state()
@@ -986,6 +1008,7 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
                 "For time-series data, set TIME_INDEX_OK = True only after df_clean is sorted by the primary time column. "
                 "If your code raises an error, fix the specific issue and try once more. "
                 "Do NOT re-run code that already succeeded. "
+                "Do NOT produce charts or plots unless the manager explicitly requests them in the instruction.\n"
                 "In your Final Answer: include df_clean.shape, columns list, dtypes summary, "
                 "what was cleaned (duplicates removed, missing values handled, type conversions), "
                 "and any validation issues found. Use actual numbers."
@@ -1062,7 +1085,7 @@ def create_dynamic_specialist_agents(executor_tool: PythonSessionTool) -> Dict[s
                 "Do NOT re-run code that already succeeded. "
                 "In your final answer: list each chart with its type and variables plotted. "
                 "Do NOT include file paths, image links, or raw JSON in your answer. "
-                "Do NOT interpret the charts — the manager provides observations."
+                "Do NOT interpret the charts or provide observations — the manager handles all interpretation."
             ),
             llm=llm_medium,
             tools=[executor_tool],
@@ -1154,6 +1177,7 @@ def build_specialist_task(
             header
             + core_mode_prefix
             + "TASK: Full preparation — env check, schema/quality summary, populate validation_report, build df_clean; print shape.\n"
+            "Do NOT produce charts or plots unless explicitly instructed.\n"
             "OUTPUT FORMAT: Your Final Answer MUST include:\n"
             "- df_clean.shape (rows, columns)\n"
             "- Column list with dtypes\n"
@@ -1206,7 +1230,8 @@ def build_specialist_task(
             "- Chart type (histogram, scatter, boxplot, heatmap, etc.)\n"
             "- Variables plotted\n"
             "- What it shows factually (e.g. 'distribution of median_income', 'correlation heatmap of numeric features')\n"
-            "Do NOT include file paths, image links, or raw JSON in your answer — charts are served separately."
+            "- A small markdown table of the data being visualized (e.g. .head() or .describe() for the plotted columns)\n"
+            "Do NOT include observations, interpretations, file paths, image links, or raw JSON in your answer."
         )
     elif agent_id == "statistics":
         desc = (
@@ -1289,17 +1314,19 @@ def build_manager_system_instruction(brief_dict: Dict[str, Any]) -> str:
         "collapsible 'thinking' panel. Your reply must be a COMPLETE, UNIFIED response.\n"
         "When populating the reply_to_user field, you MUST follow these exact steps:\n"
         "1. Write a brief 1-2 sentence introduction of what was done.\n"
-        "2. Directly embed the actual data from the specialist outputs: statistics, value counts, shapes, and metrics.\n"
+        "2. Extract and present the actual data from the specialist outputs: statistics, value counts, shapes, and metrics.\n"
         "   - You MUST format this data as clean markdown tables.\n"
         "   - You MUST place a blank line before every markdown pipe table.\n"
         "3. After each data table, write your expert observations and interpretation of that specific data (patterns, outliers, skewness, missing data, anomalies).\n"
         "4. If charts were produced, describe what they plot and their visual insights (do NOT include markdown image links like ![image]).\n"
         "5. Conclude with recommendations or next steps.\n"
+        "Do NOT simply copy-paste the specialist's entire reply. Synthesize the findings into your own words while keeping the raw numbers in tables.\n"
         "Do NOT write a vague summary like 'statistics were computed' — you MUST include the actual numbers in your reply.\n"
         "Do NOT repeat results from prior turns.\n"
         "Prefer delegating reporter only after df_clean exists and at least one analysis or visualization step has run, "
         "unless the user explicitly asks for a write-up or summary.\n"
         "Anti-loop rules:\n"
+        "- NEVER route to the same specialist role more than once in a single user turn. If a specialist has already completed its task (visible in run_history_digest), move to the next step, use CHAT to explain, or use DONE. Re-running the same role with the same or similar instruction is forbidden as it causes duplicate code execution and redundant charts.\n"
         "- NEVER copy the text starting with '[SYSTEM: older context summarized below]' or 'Here is a summary' into your reply_to_user. That is internal metadata, not your answer.\n"
         "- run_history_digest excerpts may be truncated for token limits (often with a truncation marker). "
         "That is NOT evidence the specialist failed — do NOT re-delegate the same role solely because text ends mid-sentence.\n"
@@ -1558,6 +1585,7 @@ class DataAnalysisWorkflow:
             "4) RECOMMENDATIONS (if relevant):\n"
             "- Suggest next steps based on what you observed.\n\n"
             "FORMAT RULES:\n"
+            "- Synthesize the information into a single cohesive report. Do NOT append or repeat the specialist output text verbatim.\n"
             "- Do NOT give a vague summary like 'statistics were computed'. Include ACTUAL numbers.\n"
             "- Do NOT include markdown image links like ![alt](path).\n"
             "- Do NOT include file paths, raw JSON, or code blocks.\n"
@@ -2040,7 +2068,7 @@ class DataAnalysisWorkflow:
         else:
             state.repeat_streak = 0
         state.last_agent = decision.next_agent
-        repeat_max = int(os.getenv("SAME_AGENT_REPEAT_MAX", "3"))
+        repeat_max = int(os.getenv("SAME_AGENT_REPEAT_MAX", "2"))
         if state.repeat_streak >= repeat_max:
             if interactive_chat_breaks:
                 msg = "[GUARDRAIL] Same agent repeated — stopping this turn."

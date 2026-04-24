@@ -22,6 +22,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.middleware.cors import CORSMiddleware
+import logging
+import hashlib
+from datetime import datetime
 
 _REPO_ROOT = Path(__file__).resolve().parent
 # utf-8-sig strips UTF-8 BOM so the first key is not "\ufeffGEMINI_API_KEY"
@@ -131,7 +134,7 @@ async def health():
 
 
 @app.get("/artifacts/{run_id}/charts/{filename}")
-async def artifact_chart(run_id: str, filename: str):
+async def artifact_chart(run_id: str, filename: str, download: bool = False):
     """Serve a PNG from analysis_results/run_{run_id}/charts/ (path-safe)."""
     if not filename or filename != Path(filename).name:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -147,7 +150,12 @@ async def artifact_chart(run_id: str, filename: str):
         raise HTTPException(status_code=400, detail="Invalid path") from None
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Chart not found")
-    return FileResponse(path, media_type="image/png")
+    
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    
+    return FileResponse(path, media_type="image/png", headers=headers)
 
 
 @app.get("/artifacts/{run_id}/report", response_class=PlainTextResponse)
@@ -240,9 +248,23 @@ def _run_chat_sync(
 
     chart_urls: List[str] = []
     if charts_dir.is_dir():
+        new_charts = []
         for p in sorted(charts_dir.glob("*.png"), key=lambda x: x.stat().st_mtime_ns):
             if p.name not in charts_before:
-                chart_urls.append(f"/artifacts/{wf.run_id}/charts/{p.name}")
+                new_charts.append(p)
+        
+        # Deduplicate by content hash
+        seen_hashes = set()
+        unique_new_charts = []
+        for p in new_charts:
+            with open(p, "rb") as f:
+                h = hashlib.md5(f.read()).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                unique_new_charts.append(p)
+        
+        for p in unique_new_charts:
+            chart_urls.append(f"/artifacts/{wf.run_id}/charts/{p.name}")
 
     return {
         "outcome": seg.outcome,
