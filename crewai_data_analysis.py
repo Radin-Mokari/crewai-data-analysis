@@ -2381,40 +2381,31 @@ class DataAnalysisWorkflow:
                             attempt=attempt,
                             total=total_attempts,
                         )
+                    def _step_callback(step_output):
+                        try:
+                            # step_output could be an AgentStep or a tuple, depending on action
+                            log_text = getattr(step_output, 'log', None) or str(step_output)
+                            # Clean up and truncate the log for the UI
+                            msg = log_text.replace('\n', ' ').strip()
+                            if len(msg) > 500:
+                                msg = msg[:497] + "..."
+                            _emit({
+                                "type": "specialist_step_detail",
+                                "agent": agent.role,
+                                "detail": msg
+                            })
+                        except Exception:
+                            pass
+
                     single_crew = Crew(
                         agents=[agent],
                         tasks=[task],
                         process=Process.sequential,
                         verbose=True,
+                        step_callback=_step_callback,
                         output_log_file=str(self.run_output_dir / "crew_logs.json"),
                     )
-                    _emit_log(
-                        emit,
-                        "info",
-                        "specialist",
-                        "start",
-                        f"Specialist task {task_key} started",
-                        agent=agent.role,
-                        task=task_key,
-                    )
-                    if emit:
-                        emit({"type": "specialist_start", "step": 0, "agent": agent.role})
-                        
                     result = single_crew.kickoff(inputs=extra_inputs)
-                    
-                    if emit:
-                        excerpt = (str(result) if result is not None else "")[:1200]
-                        emit({"type": "specialist_complete", "step": 0, "agent": agent.role, "excerpt": excerpt})
-                        
-                    _emit_log(
-                        emit,
-                        "info",
-                        "specialist",
-                        "complete",
-                        f"Specialist task {task_key} completed",
-                        agent=agent.role,
-                        task=task_key,
-                    )
                     self.results[task_key] = str(result)
                     return result
                 except Exception as e:

@@ -57,7 +57,7 @@ const Index = () => {
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [activeSessionId] = useState(INITIAL_SESSION_ID);
   const [messagesMap, setMessagesMap] = useState<Record<string, Message[]>>({
-    [INITIAL_SESSION_ID]: [WELCOME],
+    [INITIAL_SESSION_ID]: [],
   });
   /** Locked supervisor goal for this session (first substantive turn). */
   const [sessionGoals, setSessionGoals] = useState<Record<string, string>>({});
@@ -75,7 +75,7 @@ const Index = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
 
-  const messages = messagesMap[activeSessionId] || [WELCOME];
+  const messages = messagesMap[activeSessionId] || [];
   const backendOk = health?.status === "ok";
   const busy = chatLoading || pipelineLoading;
 

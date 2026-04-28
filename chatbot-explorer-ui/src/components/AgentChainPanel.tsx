@@ -29,6 +29,8 @@ function eventLabel(e: SupervisorStreamEvent): string {
       return `Running ${e.agent} (step ${e.step})`;
     case "specialist_complete":
       return `${e.agent} finished`;
+    case "specialist_step_detail":
+      return `${e.agent} is thinking...`;
     case "manager_message":
       return "Manager message";
     case "manager_summary":
@@ -78,6 +80,8 @@ export default function AgentChainPanel({ events, loading = false, defaultOpen, 
                   <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-emerald-600" />
                 ) : e.type === "specialist_start" ? (
                   <Circle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-blue-500 fill-blue-500/30" />
+                ) : e.type === "specialist_step_detail" ? (
+                  <Bot className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground/70" />
                 ) : (
                   <User className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
                 )}
@@ -111,6 +115,11 @@ export default function AgentChainPanel({ events, loading = false, defaultOpen, 
                     </pre>
                   )}
                   {e.type === "guardrail" && <p className="text-amber-900/90 dark:text-amber-100/90">{e.message}</p>}
+                  {e.type === "specialist_step_detail" && e.detail && (
+                    <pre className="whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-muted-foreground">
+                      {e.detail}
+                    </pre>
+                  )}
                   {e.type === "specialist_complete" && e.excerpt && (
                     <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-foreground/75">
                       {e.excerpt.length > 1200 ? `${e.excerpt.slice(0, 1200)}…` : e.excerpt}

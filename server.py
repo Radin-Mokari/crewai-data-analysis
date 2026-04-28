@@ -178,8 +178,14 @@ class ChatIn(BaseModel):
     user_prompt: Optional[str] = None
 
 
-def _sse_data_line(obj: Dict[str, Any]) -> str:
-    return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+def _sse_data_line(obj: Any) -> bytes:
+    """Format an object as standard SSE bytes. UTF-8 encoded with double newline."""
+    try:
+        data = json.dumps(obj)
+    except Exception:
+        # Fallback for non-serializable objects to keep the stream alive
+        data = json.dumps({"type": "log", "level": "error", "message": "Serialization error in stream", "ts": datetime.now().isoformat()})
+    return (f"data: {data}\n\n").encode("utf-8")
 
 
 def _run_chat_sync(
@@ -306,52 +312,61 @@ async def chat_stream(body: ChatIn):
             detail="Set user_prompt in JSON, USER_ANALYSIS_PROMPT, or a non-empty message",
         )
     
-    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+    q: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def emit_safe(item: Any):
+        loop.call_soon_threadsafe(q.put_nowait, item)
 
     def work() -> None:
         try:
-            result = _run_chat_sync(body.message.strip(), up, emit=q.put)
-            q.put({"type": "final", **result})
+            result = _run_chat_sync(body.message.strip(), up, emit=emit_safe)
+            emit_safe({"type": "final", **result})
         except Exception as e:
-            q.put({"type": "error", "message": str(e)})
+            emit_safe({"type": "error", "message": str(e)})
         finally:
-            q.put(None)
+            emit_safe(None)
 
     async def event_gen():
-        # Hold the chat lock for the ENTIRE duration of the stream to prevent concurrent state mutation
+        # 1. 4KB burst to bypass larger browser/proxy buffers
+        yield b": " + b" " * 4096 + b"\n\n"
+        
+        # 2. Immediate connection event
+        yield _sse_data_line({
+            "type": "log", 
+            "category": "workflow", 
+            "level": "info", 
+            "event": "connected", 
+            "message": "Real-time pipeline connected", 
+            "ts": datetime.now().isoformat()
+        })
+        
         async with _chat_lock:
-            loop = asyncio.get_running_loop()
-            # Start the synchronous workflow in a separate thread
             work_fut = loop.run_in_executor(None, work)
             
             try:
                 while True:
-                    try:
-                        # Wait for an event from the queue with a timeout for heartbeats
-                        # 15s is safe for most proxies/browsers
-                        item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=15.0)
-                        if item is None:
-                            break
-                        yield _sse_data_line(item)
-                    except asyncio.TimeoutError:
-                        # Send a heartbeat to keep the TCP/HTTP connection open
-                        yield _sse_data_line({"type": "heartbeat"})
-                
-                # Ensure the background thread is fully finished
+                    item = await q.get()
+                    if item is None:
+                        break
+                    
+                    if isinstance(item, dict):
+                        print(f"[SSE] Yielding: {item.get('type')}")
+                    yield _sse_data_line(item)
+                    
                 await work_fut
             except asyncio.CancelledError:
-                # If the client disconnects, we still want to finish the work thread 
-                # (since it's non-cancellable Python code) to leave the state consistent.
-                # The lock will be released when this generator is fully closed.
+                work_fut.cancel()
                 pass
 
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -415,13 +430,17 @@ async def run_pipeline_stream(body: PipelineIn):
             status_code=400,
             detail="Set user_prompt in JSON or USER_ANALYSIS_PROMPT in the environment",
         )
-    q: queue.Queue[Optional[Dict[str, Any]]] = queue.Queue()
+    q: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
     log_lines: List[str] = []
+
+    def emit_safe(item: Any):
+        loop.call_soon_threadsafe(q.put_nowait, item)
 
     def work() -> None:
         try:
-            result = _run_pipeline_sync(up, body.follow_ups, emit=q.put, log=log_lines)
-            q.put(
+            result = _run_pipeline_sync(up, body.follow_ups, emit=emit_safe, log=log_lines)
+            emit_safe(
                 {
                     "type": "final",
                     "ok": result["ok"],
@@ -431,38 +450,39 @@ async def run_pipeline_stream(body: PipelineIn):
                 }
             )
         except Exception as e:
-            q.put({"type": "error", "message": str(e)})
+            emit_safe({"type": "error", "message": str(e)})
         finally:
-            q.put(None)
+            emit_safe(None)
 
     async def event_gen():
+        # 1. 4KB burst to bypass larger browser/proxy buffers
+        yield b": " + b" " * 4096 + b"\n\n"
+        
         # Hold the chat lock for the ENTIRE duration of the full batch pipeline
         async with _chat_lock:
-            loop = asyncio.get_running_loop()
             work_fut = loop.run_in_executor(None, work)
             
             try:
                 while True:
-                    try:
-                        item = await asyncio.wait_for(asyncio.to_thread(q.get), timeout=15.0)
-                        if item is None:
-                            break
-                        yield _sse_data_line(item)
-                    except asyncio.TimeoutError:
-                        yield _sse_data_line({"type": "heartbeat"})
+                    item = await q.get()
+                    if item is None:
+                        break
+                    if isinstance(item, dict):
+                        print(f"[SSE-PIPELINE] Yielding: {item.get('type')}")
+                    yield _sse_data_line(item)
                 
                 await work_fut
             except asyncio.CancelledError:
-                # Keep state consistent even if browser tab closes
                 pass
 
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

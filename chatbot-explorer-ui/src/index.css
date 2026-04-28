@@ -64,3 +64,39 @@
     border-radius: 9999px;
   }
 }
+
+.pdf-export-mode {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  padding: 20px !important;
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.pdf-export-mode * {
+  color: #000000 !important;
+  border-color: #e5e7eb !important;
+  background-color: transparent !important;
+}
+
+.pdf-export-mode table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin: 10px 0 !important;
+}
+
+.pdf-export-mode th, .pdf-export-mode td {
+  border: 1px solid #e5e7eb !important;
+  padding: 8px !important;
+}
+
+.pdf-export-mode img {
+  max-width: 100% !important;
+  height: auto !important;
+  display: block !important;
+  margin: 15px auto !important;
+}
+
+.pdf-export-mode .not-prose {
+  background-color: transparent !important;
+}

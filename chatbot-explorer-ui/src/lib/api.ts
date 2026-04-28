@@ -69,6 +69,7 @@ export type SupervisorStreamEvent =
   | { type: "manager_decision"; instruction?: string; rationale?: string; next_agent: string }
   | { type: "specialist_start"; step: number; agent: string }
   | { type: "specialist_complete"; step: number; agent: string; excerpt?: string; agent_code?: string }
+  | { type: "specialist_step_detail"; agent: string; detail: string }
   | { type: "manager_message"; text: string }
   | { type: "manager_summary"; text: string }
   | { type: "guardrail"; message: string }
@@ -119,6 +120,29 @@ function apiBase(): string {
     return String(v).replace(/\/$/, "");
   }
   return "/api";
+}
+
+/**
+ * Base URL for SSE (Server-Sent Events) requests.
+ *
+ * The Vite dev proxy (http-proxy) buffers entire HTTP responses before
+ * forwarding them, which completely breaks real-time SSE streaming.
+ * For SSE endpoints we bypass the proxy and connect directly to the
+ * FastAPI server.  Regular JSON API calls still go through the proxy
+ * via `apiBase()`.
+ *
+ * Priority: VITE_API_BASE_URL → http://127.0.0.1:{VITE_API_PORT|8765}
+ */
+function sseBase(): string {
+  // If the user set an explicit base URL, they're already bypassing the proxy
+  const v = import.meta.env.VITE_API_BASE_URL;
+  if (v != null && String(v).trim() !== "") {
+    return String(v).replace(/\/$/, "");
+  }
+  // Default: connect directly to the FastAPI server (matches CORS origins
+  // and the default `uvicorn server:app --host 127.0.0.1 --port 8765`)
+  const port = import.meta.env.VITE_API_PORT ?? "8765";
+  return `http://127.0.0.1:${port}`;
 }
 
 /** Prefix an artifact path (`/artifacts/...` from the API) for `<img src>` or fetches. Works with Vite `/api` proxy or `VITE_API_BASE_URL`. */
@@ -216,10 +240,14 @@ async function readSsePost(
   onEvent: (obj: Record<string, unknown>) => void,
   onLog?: (log: LogEvent) => void,
 ): Promise<Record<string, unknown>> {
-  const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
+  // Use sseBase() to bypass the Vite dev proxy which buffers SSE responses
+  const url = `${sseBase()}${path.startsWith("/") ? path : `/${path}`}`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      "Accept": "text/event-stream"
+    },
     body: JSON.stringify(jsonBody),
   });
   if (!res.ok) {

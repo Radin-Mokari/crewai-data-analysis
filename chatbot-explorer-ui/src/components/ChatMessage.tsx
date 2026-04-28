@@ -1,11 +1,13 @@
-import { useMemo } from "react";
+import { useRef, useMemo, useState } from "react";
 import type { Components } from "react-markdown";
-import { Bot, User, Download } from "lucide-react";
+import { Bot, User, Download, FileDown, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import AgentChainPanel from "@/components/AgentChainPanel";
 import { resolveArtifactUrl, type SupervisorStreamEvent } from "@/lib/api";
 import { wrapTabularPlaintextInFences } from "@/lib/markdownTabular";
+// @ts-ignore - html2pdf.js doesn't have official types
+import html2pdf from "html2pdf.js";
 
 interface ChatMessageProps {
   content: string;
@@ -67,6 +69,47 @@ const mdTableComponents: Partial<Components> = {
 const ChatMessage = ({ content, role, chipLabel, wide, chain, onLoadCode }: ChatMessageProps) => {
   const isUser = role === "user";
   const botMarkdown = useMemo(() => wrapTabularPlaintextInFences(content), [content]);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const isReport = useMemo(() => {
+    return role === "bot" && (content.includes("# Executive Summary") || content.includes("## Charts") || content.includes("Report"));
+  }, [role, content]);
+
+  const handleDownloadPdf = async () => {
+    const element = contentRef.current;
+    if (!element) return;
+
+    setIsExporting(true);
+    try {
+      // Create a clone of the element to modify it for PDF without affecting the UI
+      const opt = {
+        margin: [10, 10, 10, 10],
+        filename: `Analysis_Report_${new Date().toISOString().split('T')[0]}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { 
+          scale: 1, // Reduced from 2 to prevent canvas memory allocation errors
+          useCORS: true, 
+          logging: false,
+          backgroundColor: '#ffffff'
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        // Removed 'avoid-all' because it causes infinite loops (and OOM) if an element is taller than one page
+        pagebreak: { mode: ['css', 'legacy'] }
+      };
+
+      // Temporarily add a class to force light-mode styling for the PDF
+      element.classList.add('pdf-export-mode');
+      
+      await html2pdf().from(element).set(opt).save();
+      
+      element.classList.remove('pdf-export-mode');
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
@@ -96,10 +139,30 @@ const ChatMessage = ({ content, role, chipLabel, wide, chain, onLoadCode }: Chat
             content
           ) : (
             <div className="space-y-3">
-              {chain && chain.length > 0 && (
-                <AgentChainPanel events={chain} loading={false} defaultOpen={false} onLoadCode={onLoadCode} />
-              )}
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  {chain && chain.length > 0 && (
+                    <AgentChainPanel events={chain} loading={false} defaultOpen={false} onLoadCode={onLoadCode} />
+                  )}
+                </div>
+                {isReport && (
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={isExporting}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background/50 px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground transition-all hover:bg-accent hover:text-foreground disabled:opacity-50"
+                    title="Download report as PDF"
+                  >
+                    {isExporting ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <FileDown className="h-3 w-3" />
+                    )}
+                    {isExporting ? "Generating..." : "PDF"}
+                  </button>
+                )}
+              </div>
             <div
+              ref={contentRef}
               className={[
                 "prose prose-sm max-w-none",
                 "text-foreground",
