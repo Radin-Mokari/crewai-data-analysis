@@ -54,6 +54,7 @@ def _cors_allow_origins() -> List[str]:
 
 _workflow: Optional[Any] = None
 _chat_lock = asyncio.Lock()
+_is_running = False
 
 # Max chars for specialist excerpts in POST /chat JSON; report body in POST /report.
 _CHAT_EXCERPT_MAX = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "12000"))
@@ -185,7 +186,8 @@ def _sse_data_line(obj: Any) -> bytes:
     except Exception:
         # Fallback for non-serializable objects to keep the stream alive
         data = json.dumps({"type": "log", "level": "error", "message": "Serialization error in stream", "ts": datetime.now().isoformat()})
-    return (f"data: {data}\n\n").encode("utf-8")
+    padding = " " * 2048
+    return (f": {padding}\ndata: {data}\n\n").encode("utf-8")
 
 
 def _run_chat_sync(
@@ -325,6 +327,8 @@ async def chat_stream(body: ChatIn):
         except Exception as e:
             emit_safe({"type": "error", "message": str(e)})
         finally:
+            global _is_running
+            _is_running = False
             emit_safe(None)
 
     async def event_gen():
@@ -342,6 +346,12 @@ async def chat_stream(body: ChatIn):
         })
         
         async with _chat_lock:
+            global _is_running
+            if _is_running:
+                yield _sse_data_line({"type": "error", "message": "A background workflow is still running. Please wait for it to finish."})
+                return
+                
+            _is_running = True
             work_fut = loop.run_in_executor(None, work)
             
             try:
@@ -353,6 +363,7 @@ async def chat_stream(body: ChatIn):
                     if isinstance(item, dict):
                         print(f"[SSE] Yielding: {item.get('type')}")
                     yield _sse_data_line(item)
+                    await asyncio.sleep(0)  # Force Uvicorn to flush the TCP buffer
                     
                 await work_fut
             except asyncio.CancelledError:
@@ -387,10 +398,10 @@ def _run_pipeline_sync(
     assert wf is not None
     wf.ensure_dynamic_brief()
     wf.session_user_goal = (user_prompt or "").strip()
-    wf.run_dynamic_team_pipeline(
+    results = wf.run_dynamic_team_pipeline(
         user_prompt=user_prompt,
         followup_messages=follow_ups,
-        skip_terminal_reporter=True,
+        skip_terminal_reporter=False,
         emit=emit,
         log=log,
     )
@@ -398,7 +409,48 @@ def _run_pipeline_sync(
     wf._http_supervisor_state = None
     wf._interactive_specialists_cache = None
     wf._save_kernel_snapshot_safe()
-    return {"ok": True, "run_id": wf.run_id, "specialist_steps": len(wf.run_history_dynamic)}
+
+    # Generate a final manager reply for the full batch
+    manager_reply = ""
+    new_entries = results.get("dynamic_run_history", [])
+    if new_entries:
+        try:
+            summary = wf.generate_turn_summary(new_entries, user_prompt)
+            if summary:
+                manager_reply = summary
+                if emit is not None:
+                    emit({"type": "manager_summary", "text": summary[:500] + ("…" if len(summary) > 500 else "")})
+        except Exception as exc:
+            print(f"[SERVER] Full batch turn summary failed: {exc}")
+
+    if not manager_reply:
+        manager_reply = f"Full batch completed successfully. {len(new_entries)} specialist steps were executed and a final report was generated."
+
+    # Collect charts
+    charts_dir = wf.run_output_dir / "charts"
+    chart_urls = []
+    if charts_dir.is_dir():
+        for p in sorted(charts_dir.glob("*.png")):
+            chart_urls.append(f"/artifacts/{wf.run_id}/charts/{p.name}")
+
+    specialist_steps_data: List[Dict[str, str]] = []
+    for e in new_entries:
+        excerpt = str(e.get("output_excerpt") or "")[:_CHAT_EXCERPT_MAX]
+        specialist_steps_data.append(
+            {
+                "agent": str(e.get("agent") or ""),
+                "excerpt": excerpt,
+            }
+        )
+
+    return {
+        "ok": True, 
+        "outcome": "ok",
+        "run_id": wf.run_id, 
+        "specialist_steps": specialist_steps_data,
+        "manager_reply": manager_reply,
+        "chart_urls": chart_urls
+    }
 
 
 @app.post("/pipeline")
@@ -446,12 +498,16 @@ async def run_pipeline_stream(body: PipelineIn):
                     "ok": result["ok"],
                     "run_id": result["run_id"],
                     "specialist_steps": result["specialist_steps"],
+                    "manager_reply": result.get("manager_reply", ""),
+                    "chart_urls": result.get("chart_urls", []),
                     "lines": list(log_lines),
                 }
             )
         except Exception as e:
             emit_safe({"type": "error", "message": str(e)})
         finally:
+            global _is_running
+            _is_running = False
             emit_safe(None)
 
     async def event_gen():
@@ -460,6 +516,12 @@ async def run_pipeline_stream(body: PipelineIn):
         
         # Hold the chat lock for the ENTIRE duration of the full batch pipeline
         async with _chat_lock:
+            global _is_running
+            if _is_running:
+                yield _sse_data_line({"type": "error", "message": "A background workflow is still running. Please wait for it to finish."})
+                return
+                
+            _is_running = True
             work_fut = loop.run_in_executor(None, work)
             
             try:

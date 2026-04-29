@@ -60,8 +60,15 @@ export type ResetResponse = {
 /** POST /pipeline — full dynamic supervisor batch until DONE / guardrails / DYNAMIC_MAX_STEPS */
 export type PipelineResponse = {
   ok: boolean;
+  outcome: string;
   run_id: string;
-  specialist_steps: number;
+  specialist_steps?: SpecialistStep[];
+  /** Primary markdown content for the bot reply. */
+  manager_reply?: string;
+  /** Server paths like `/artifacts/{run_id}/charts/file.png`. */
+  chart_urls?: string[];
+  /** Infrastructure log lines produced during the batch run. */
+  lines?: string[];
 };
 
 /** SSE payloads from supervisor (before `final`). Chain-of-thoughts events. */
@@ -107,12 +114,7 @@ export type LogEvent = {
   next_agent?: string;
 };
 
-export type PipelineStreamFinal = {
-  ok: boolean;
-  run_id: string;
-  specialist_steps: number;
-  lines: string[];
-};
+
 
 function apiBase(): string {
   const v = import.meta.env.VITE_API_BASE_URL;
@@ -142,7 +144,8 @@ function sseBase(): string {
   // Default: connect directly to the FastAPI server (matches CORS origins
   // and the default `uvicorn server:app --host 127.0.0.1 --port 8765`)
   const port = import.meta.env.VITE_API_PORT ?? "8765";
-  return `http://127.0.0.1:${port}`;
+  const host = typeof window !== "undefined" ? window.location.hostname : "127.0.0.1";
+  return `http://${host}:${port}`;
 }
 
 /** Prefix an artifact path (`/artifacts/...` from the API) for `<img src>` or fetches. Works with Vite `/api` proxy or `VITE_API_BASE_URL`. */
@@ -325,7 +328,7 @@ export async function postPipelineStream(
   body: { user_prompt?: string | null; follow_ups?: string[] },
   onEvent: (evt: SupervisorStreamEvent) => void,
   onLog?: (log: LogEvent) => void,
-): Promise<PipelineStreamFinal> {
+): Promise<PipelineResponse> {
   const payload: Record<string, unknown> = {};
   if (body.user_prompt != null && String(body.user_prompt).trim() !== "") {
     payload.user_prompt = String(body.user_prompt).trim();
@@ -342,7 +345,7 @@ export async function postPipelineStream(
     onLog,
   );
   const { type: _t, ...rest } = fin;
-  return rest as unknown as PipelineStreamFinal;
+  return rest as unknown as PipelineResponse;
 }
 
 export interface RunCodeResponse {

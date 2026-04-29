@@ -776,12 +776,12 @@ class ManagerDecision(BaseModel):
         "cleaning",
         "feature_engineering",
         "class_imbalance",
-        "eda",
+        "eda", "EDA",
         "visualization",
         "statistics",
         "reporter",
-        "CHAT",
-        "DONE",
+        "CHAT", "chat",
+        "DONE", "done",
     ]
     instruction: Optional[str] = ""
     rationale: str = ""
@@ -2389,11 +2389,12 @@ class DataAnalysisWorkflow:
                             msg = log_text.replace('\n', ' ').strip()
                             if len(msg) > 500:
                                 msg = msg[:497] + "..."
-                            _emit({
-                                "type": "specialist_step_detail",
-                                "agent": agent.role,
-                                "detail": msg
-                            })
+                            if emit is not None:
+                                emit({
+                                    "type": "specialist_step_detail",
+                                    "agent": agent.role,
+                                    "detail": msg
+                                })
                         except Exception:
                             pass
 
@@ -2402,6 +2403,7 @@ class DataAnalysisWorkflow:
                         tasks=[task],
                         process=Process.sequential,
                         verbose=True,
+                        cache=False,
                         step_callback=_step_callback,
                         output_log_file=str(self.run_output_dir / "crew_logs.json"),
                     )

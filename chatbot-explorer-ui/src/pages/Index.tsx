@@ -16,6 +16,7 @@ import {
   type HealthResponse,
   type SupervisorStreamEvent,
   type LogEvent,
+  type ChatResponse,
 } from "@/lib/api";
 import AgentChainPanel from "@/components/AgentChainPanel";
 import { formatChatReply } from "@/lib/formatChatReply";
@@ -279,15 +280,14 @@ const Index = () => {
         },
         handleLog,
       );
+      const resData = data as unknown as ChatResponse;
+      const formatted = formatChatReply(resData, resolveArtifactUrl);
+
       appendMessages(sid, [
         {
           id: nextId.current++,
           role: "bot",
-          content:
-            `**Full batch finished.**\n\n` +
-            `- Specialist steps executed: **${data.specialist_steps}**\n` +
-            `- run_id: \`${data.run_id}\`\n\n` +
-            `_HTTP chat state was reset on the server. Your next normal message starts a new supervisor loop on the same kernel._`,
+          content: formatted,
           chain: [...chainAccRef.current],
         },
       ]);
@@ -387,7 +387,7 @@ const Index = () => {
                 </p>
               ) : (
                 <p>
-                  <strong>No workflow.</strong> {health.hint} Set <code className="rounded bg-background/60 px-1">DATASET_PATH</code>{" "}
+                  <strong>No workflow.</strong> {health?.status === "no_workflow" ? health.hint : ""} Set <code className="rounded bg-background/60 px-1">DATASET_PATH</code>{" "}
                   in <code className="rounded bg-background/60 px-1">.env</code> and restart the server.
                 </p>
               )}
