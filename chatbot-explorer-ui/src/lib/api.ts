@@ -112,6 +112,7 @@ export type LogEvent = {
   turn?: number;
   outcome?: string;
   next_agent?: string;
+  tokens?: number;
 };
 
 

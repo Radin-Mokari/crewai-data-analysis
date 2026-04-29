@@ -218,6 +218,11 @@ const LogsSidebar = ({ logs, onClear }: LogsSidebarProps) => {
                 </span>
                 <span className={`min-w-0 flex-1 break-words ${LEVEL_STYLE[l.level]}`}>
                   {l.message || l.event}
+                  {l.tokens != null && (
+                    <span className="ml-2 inline-flex items-center rounded-full bg-accent/50 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
+                      {l.tokens} tokens
+                    </span>
+                  )}
                 </span>
               </li>
             ))}

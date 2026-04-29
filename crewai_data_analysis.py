@@ -11,12 +11,33 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from datetime import datetime
 from dataclasses import dataclass
 
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+def count_tokens(text: str, model: str = "gpt-4o") -> int:
+    """Estimate token count for a given text using tiktoken. Safe if library is missing."""
+    if not text or tiktoken is None:
+        return 0
+    try:
+        # Use o200k_base for gpt-4o/o1 models, cl100k_base for gpt-4/3.5
+        encoding = tiktoken.encoding_for_model(model)
+        return len(encoding.encode(text))
+    except Exception:
+        # Fallback to cl100k_base if model name is unknown
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except Exception:
+            return 0
 
 from crewai import Agent, Task, Crew, Process
 from crewai.tools import BaseTool
@@ -1937,13 +1958,19 @@ class DataAnalysisWorkflow:
                 "\nGUARDRAIL_HINT: The same specialist role was chosen repeatedly. "
                 "Pick a different next_agent, narrow the instruction, use CHAT to explain, or DONE if satisfied.\n"
             )
-        _emit_log(emit, "info", "manager", "thinking", "Manager consulting LLM for next decision")
+        
+        # Trace input tokens (resilient)
+        in_tokens = count_tokens(user_payload) + count_tokens(chat_block) + count_tokens(system_instruction)
+        _emit_log(emit, "info", "manager", "thinking", "Manager consulting LLM for next decision", tokens=in_tokens)
         try:
             decision = invoke_manager_decision(
                 chat_block=chat_block,
                 user_payload=user_payload,
                 system_instruction=system_instruction,
             )
+            # Trace output tokens (resilient)
+            out_tokens = count_tokens(decision.model_dump_json())
+            _emit_log(emit, "info", "manager", "decision_received", f"Decision: {decision.next_agent}", tokens=out_tokens)
         except Exception as _mgr_exc:
             _emit_log(
                 emit,
@@ -2405,9 +2432,17 @@ class DataAnalysisWorkflow:
                         verbose=True,
                         cache=False,
                         step_callback=_step_callback,
-                        output_log_file=str(self.run_output_dir / "crew_logs.json"),
                     )
+                    
+                    # Trace input tokens (resilient)
+                    in_tokens = count_tokens(task.description)
+                    _emit_log(emit, "info", "task", "start", f"Starting task {task_key}", tokens=in_tokens)
+                    
                     result = single_crew.kickoff(inputs=extra_inputs)
+                    
+                    # Trace output tokens (resilient)
+                    out_tokens = count_tokens(str(result))
+                    _emit_log(emit, "info", "task", "complete", f"Task {task_key} complete", tokens=out_tokens)
                     self.results[task_key] = str(result)
                     return result
                 except Exception as e:

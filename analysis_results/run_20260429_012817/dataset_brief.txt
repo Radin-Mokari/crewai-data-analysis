@@ -1,0 +1,9 @@
+=== DATASET BRIEF (deterministic) ===
+shape: 1894 rows x 10 columns
+is_time_series: False
+top_missing_counts:
+  wind_speed: 1894
+  min_temp: 27
+  max_temp: 27
+  pressure: 27
+duplicate_rows: 0

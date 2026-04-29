@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-10\\mars-weather.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "messages": [
+      "Initial df_raw shape: (1894, 10).",
+      "No duplicate rows found.",
+      "Dropped column 'wind_speed' due to 100% missing values.",
+      "Imputed missing values in numeric column 'min_temp' with median (-76.0).",
+      "Imputed missing values in numeric column 'max_temp' with median (-11.0).",
+      "Imputed missing values in numeric column 'pressure' with median (853.0).",
+      "Converted 'terrestrial_date' to datetime.",
+      "Converted float column 'min_temp' to integer.",
+      "Converted float column 'max_temp' to integer.",
+      "Converted float column 'pressure' to integer.",
+      "Final df_clean shape: (1894, 9).",
+      "Feature engineering complete. df_features created."
+    ],
+    "initial_df_shape": [
+      1894,
+      10
+    ],
+    "initial_dtypes": {
+      "id": "int64",
+      "terrestrial_date": "str",
+      "sol": "int64",
+      "ls": "int64",
+      "month": "str",
+      "min_temp": "float64",
+      "max_temp": "float64",
+      "pressure": "float64",
+      "wind_speed": "float64",
+      "atmo_opacity": "str"
+    },
+    "duplicates_removed": 0,
+    "missing_value_handling": [
+      "Dropped column 'wind_speed' due to 100% missing values.",
+      "Imputed missing values in numeric column 'min_temp' with median (-76.0).",
+      "Imputed missing values in numeric column 'max_temp' with median (-11.0).",
+      "Imputed missing values in numeric column 'pressure' with median (853.0)."
+    ],
+    "dtype_conversions": [
+      "Converted 'terrestrial_date' to datetime.",
+      "Converted float column 'min_temp' to integer.",
+      "Converted float column 'max_temp' to integer.",
+      "Converted float column 'pressure' to integer."
+    ],
+    "final_df_shape": [
+      1894,
+      9
+    ],
+    "final_dtypes": {
+      "id": "int64",
+      "terrestrial_date": "datetime64[us]",
+      "sol": "int64",
+      "ls": "int64",
+      "month": "str",
+      "min_temp": "int64",
+      "max_temp": "int64",
+      "pressure": "int64",
+      "atmo_opacity": "str"
+    }
+  },
+  "DATASET_COLUMNS": [
+    "id",
+    "terrestrial_date",
+    "sol",
+    "ls",
+    "month",
+    "min_temp",
+    "max_temp",
+    "pressure",
+    "atmo_opacity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "id",
+    "sol",
+    "ls",
+    "min_temp",
+    "max_temp",
+    "pressure",
+    "terrestrial_date_year",
+    "terrestrial_date_month",
+    "terrestrial_date_day_of_week",
+    "terrestrial_date_day_of_year",
+    "ls_sin",
+    "ls_cos"
+  ],
+  "CATEGORICAL_COLUMNS": [],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "id",
+    "sol",
+    "ls",
+    "min_temp",
+    "max_temp",
+    "pressure",
+    "wind_speed"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "terrestrial_date",
+    "month",
+    "atmo_opacity"
+  ],
+  "DATASET_SHAPE": [
+    1894,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": true
+}

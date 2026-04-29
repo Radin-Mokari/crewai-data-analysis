@@ -13,3 +13,4 @@ pyarrow>=14.0.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 tabulate>=0.10.0
+tiktoken>=0.8.0
