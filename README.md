@@ -17,6 +17,9 @@ A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic s
 - **Core mode prompting**: Dynamic columns (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`); no hardcoded column names.
 - **Codified prompting**: Analysis agents plan (pseudocode) before executing; inspector-style retries on errors.
 - **Step delays & retries**: Configurable pause between supervisor turns (`DYNAMIC_STEP_DELAY_SECONDS`); task retries with backoff in code — not a separate “API rate limiter,” but reduces burst load on the LLM.
+- **Real-time Streaming Observability**: High-performance `asyncio` streaming pipeline for logs and Chain-of-Thought events. Uses packet padding and explicit flushing to ensure immediate UI updates.
+- **Token Usage Tracing**: Precise real-time token tracking using **Tiktoken** (with resilient fallback). Token usage badges are displayed directly in the UI workflow logs.
+- **Concurrency Stabilization**: Global execution locks to prevent background thread contention and GIL starvation during long-running agent workflows.
 
 ## Requirements
 
@@ -164,7 +167,9 @@ React + TypeScript app in **`chatbot-explorer-ui/`**. In development it proxies 
    npm run dev
    ```
 
-Open the URL Vite prints (default **http://localhost:8080**). Optional: copy `chatbot-explorer-ui/.env.example` to `.env` and set **`VITE_API_BASE_URL`** if you run the API on a non-default host/port without the proxy.
+Open the URL Vite prints (default **http://localhost:8080**). 
+
+**Note on Memory:** If you encounter a "Process out of memory" error during `npm run dev`, the `package.json` includes an automatic fix that increases the Node.js memory limit to 4GB.
 
 **Behavior notes:** The first user message in a sidebar session sets the **`user_prompt`** goal sent on every `/chat` until you start a new chat (client-side sessions only; the server keeps one workflow). **Full batch** sends that goal to **`POST /pipeline`**; if you have not set a session goal yet, the server falls back to **`USER_ANALYSIS_PROMPT`** in `.env` (or returns 400). The **Reporter** chip triggers **`POST /report`** instead of chat; the UI renders **`report_markdown`** when returned. Normal chat replies show manager **`lines`**, specialist excerpts, and chart images via **`chart_urls`** (loaded through the dev proxy as `/api/artifacts/...`). After a full batch, the server resets HTTP interactive state (same as API docs). Requests can take a long time while CrewAI runs; controls are disabled until the response returns.
 
@@ -179,7 +184,7 @@ Open the URL Vite prints (default **http://localhost:8080**). Optional: copy `ch
 Results go under timestamped directories, for example:
 
 ```
-analysis_results/
+analysis_results/         # Tracked by default for persistence
 └── run_20251230_220626/
     ├── analysis_report_20251230_220626.md
     ├── dataset_brief.txt
@@ -296,5 +301,17 @@ ImportError: Google Gen AI native provider not available
 Agent code may call `plt.show()` while the backend is **Agg** (no GUI). Figures should still be saved under `charts/` via `savefig` / executor behavior; the message is a **warning**, not a fatal error.
 
 ### Parquet / snapshot errors
-
 Install **pyarrow**: `pip install pyarrow` (listed in `requirements.txt`).
+
+### Vite: "Fatal process out of memory"
+If the frontend crashes during startup, ensure you are running the project's custom `dev` script. The memory limit is already increased to 4GB in `package.json`:
+```bash
+npm run dev
+```
+
+### Server: No token counts showing
+If token counts appear as "0", ensure `tiktoken` is installed in your active virtual environment:
+```bash
+pip install tiktoken
+```
+The system uses a resilient import, so it will not crash if the library is missing, but counts will be disabled.
