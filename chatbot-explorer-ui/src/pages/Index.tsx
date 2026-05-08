@@ -417,6 +417,9 @@ const Index = () => {
 
         <div className="border-t border-border bg-background px-4 pb-5 pt-3">
           <PromptIsland onSend={handleSend} disabled={busy || !backendOk} />
+          <p className="text-center text-[11px] text-muted-foreground/60 mt-2">
+            AI may produce incorrect answers. Please double-check the results.
+          </p>
         </div>
       </div>
 

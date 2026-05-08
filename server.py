@@ -1,9 +1,4 @@
-"""
-Local FastAPI server: one DataAnalysisWorkflow, one chat lock, same supervisor rules as CLI.
-
-Run: uvicorn server:app --host 127.0.0.1 --port 8765
-Requires: DATASET_PATH, GEMINI_API_KEY (see .env.example).
-"""
+"""FastAPI server for CrewAI Data Analysis. Run: uvicorn server:app --host 127.0.0.1 --port 8765"""
 
 from __future__ import annotations
 
@@ -27,7 +22,7 @@ import hashlib
 from datetime import datetime
 
 _REPO_ROOT = Path(__file__).resolve().parent
-# utf-8-sig strips UTF-8 BOM so the first key is not "\ufeffGEMINI_API_KEY"
+
 load_dotenv(_REPO_ROOT / ".env", encoding="utf-8-sig")
 
 
@@ -56,7 +51,7 @@ _workflow: Optional[Any] = None
 _chat_lock = asyncio.Lock()
 _is_running = False
 
-# Max chars for specialist excerpts in POST /chat JSON; report body in POST /report.
+
 _CHAT_EXCERPT_MAX = int(os.getenv("CHAT_EXCERPT_MAX_CHARS", "12000"))
 _REPORT_MARKDOWN_MAX = int(os.getenv("REPORT_MARKDOWN_MAX_CHARS", "200000"))
 
@@ -180,11 +175,11 @@ class ChatIn(BaseModel):
 
 
 def _sse_data_line(obj: Any) -> bytes:
-    """Format an object as standard SSE bytes. UTF-8 encoded with double newline."""
+    """Format as SSE bytes with padding to force flush."""
     try:
         data = json.dumps(obj)
     except Exception:
-        # Fallback for non-serializable objects to keep the stream alive
+
         data = json.dumps({"type": "log", "level": "error", "message": "Serialization error in stream", "ts": datetime.now().isoformat()})
     padding = " " * 2048
     return (f": {padding}\ndata: {data}\n\n").encode("utf-8")
@@ -241,8 +236,7 @@ def _run_chat_sync(
             }
         )
 
-    # Generate a turn summary when specialists ran but manager_reply is empty/short.
-    # This ensures the user always sees a substantive answer with actual data.
+    # Generate summary if manager_reply is too short
     manager_reply = (seg.manager_reply or "").strip()
     if new_entries and len(manager_reply) < 800:
         try:
@@ -261,7 +255,7 @@ def _run_chat_sync(
             if p.name not in charts_before:
                 new_charts.append(p)
         
-        # Deduplicate by content hash
+
         seen_hashes = set()
         unique_new_charts = []
         for p in new_charts:
@@ -332,10 +326,10 @@ async def chat_stream(body: ChatIn):
             emit_safe(None)
 
     async def event_gen():
-        # 1. 4KB burst to bypass larger browser/proxy buffers
-        yield b": " + b" " * 4096 + b"\n\n"
+        # 64KB padding burst to defeat browser/proxy/OS buffering (like TCP Nagle's algorithm)
+        yield b": " + b" " * 65536 + b"\n\n"
         
-        # 2. Immediate connection event
+
         yield _sse_data_line({
             "type": "log", 
             "category": "workflow", 
@@ -410,7 +404,7 @@ def _run_pipeline_sync(
     wf._interactive_specialists_cache = None
     wf._save_kernel_snapshot_safe()
 
-    # Generate a final manager reply for the full batch
+
     manager_reply = ""
     new_entries = results.get("dynamic_run_history", [])
     if new_entries:
@@ -426,7 +420,7 @@ def _run_pipeline_sync(
     if not manager_reply:
         manager_reply = f"Full batch completed successfully. {len(new_entries)} specialist steps were executed and a final report was generated."
 
-    # Collect charts
+
     charts_dir = wf.run_output_dir / "charts"
     chart_urls = []
     if charts_dir.is_dir():
@@ -511,10 +505,10 @@ async def run_pipeline_stream(body: PipelineIn):
             emit_safe(None)
 
     async def event_gen():
-        # 1. 4KB burst to bypass larger browser/proxy buffers
-        yield b": " + b" " * 4096 + b"\n\n"
+        # 64KB padding burst to defeat browser/proxy/OS buffering (like TCP Nagle's algorithm)
+        yield b": " + b" " * 65536 + b"\n\n"
         
-        # Hold the chat lock for the ENTIRE duration of the full batch pipeline
+
         async with _chat_lock:
             global _is_running
             if _is_running:
@@ -623,7 +617,7 @@ async def run_code(body: RunCodeIn):
         loop = asyncio.get_running_loop()
         result_data = await loop.run_in_executor(None, _exec_sync)
         
-        # Convert absolute paths to API artifact paths
+
         charts = result_data.get("charts", [])
         if charts:
             urls = []

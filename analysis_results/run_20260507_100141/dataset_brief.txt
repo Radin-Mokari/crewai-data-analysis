@@ -1,0 +1,6 @@
+=== DATASET BRIEF (deterministic) ===
+shape: 20640 rows x 10 columns
+is_time_series: False
+top_missing_counts:
+  total_bedrooms: 207
+duplicate_rows: 0

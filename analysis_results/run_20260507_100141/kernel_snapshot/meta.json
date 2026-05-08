@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-10\\California_Housing_Prices.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "messages": [
+      "No duplicate rows found.",
+      "Missing values detected:",
+      "  Column 'total_bedrooms': 207 missing values (1.00%).",
+      "No duplicate rows found.",
+      "Missing values detected:",
+      "  Column 'total_bedrooms': 207 missing values (1.00%)."
+    ]
+  },
+  "DATASET_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value",
+    "ocean_proximity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "DATASET_SHAPE": [
+    20640,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": false
+}

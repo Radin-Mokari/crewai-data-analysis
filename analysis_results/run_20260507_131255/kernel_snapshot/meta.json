@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "dataset_path": "C:\\Users\\ASUS\\OneDrive\\Desktop\\Developing Prototype\\crewai-data-analysis-10\\California_Housing_Prices.csv",
+  "TIME_INDEX_OK": false,
+  "validation_report": {
+    "messages": [
+      "Starting data preparation.",
+      "Initial df_raw shape: (20640, 10)",
+      "Initial df_raw columns: 10",
+      "No duplicate rows found.",
+      "Dropped 207 rows with missing values.",
+      "Inferred NUMERIC_COLUMNS: ['longitude', 'latitude', 'housing_median_age', 'total_rooms', 'total_bedrooms', 'population', 'households', 'median_income', 'median_house_value']",
+      "Inferred CATEGORICAL_COLUMNS: ['ocean_proximity']",
+      "Final df_clean shape: (20433, 10)"
+    ],
+    "issues": [
+      "Columns with missing values:\n|                |   0 |\n|:---------------|----:|\n| total_bedrooms | 207 |"
+    ],
+    "charts": [
+      {
+        "type": "heatmap",
+        "variables_plotted": "All numeric columns in df_clean",
+        "description": "Correlation heatmap of numeric features",
+        "data_preview": "|                    | longitude   | latitude   | housing_median_age   | total_rooms   | total_bedrooms   | population   | households   | median_income   | median_house_value   |\n|:-------------------|:------------|:-----------|:---------------------|:--------------|:-----------------|:-------------|:-------------|:----------------|:---------------------|\n| longitude          | 1           | -0.924616  | -0.109357            | 0.0454802     | 0.069608         | 0.10027      | 0.0565128    | -0.0155502      | -0.0453982           |\n| latitude           | -0.924616   | 1          | 0.0118991            | -0.0366668    | -0.0669828       | -0.108997    | -0.0717742   | -0.0796263      | -0.144638            |\n| housing_median_age | -0.109357   | 0.0118991  | 1                    | -0.360628     | -0.320451        | -0.295787    | -0.302768    | -0.118278       | 0.106432             |\n| total_rooms        | 0.0454802   | -0.0366668 | -0.360628            | 1             | 0.93038          | 0.857281     | 0.918992     | 0.197882        | 0.133294             |\n| total_bedrooms     | 0.069608    | -0.0669828 | -0.320451            | 0.93038       | 1                | 0.877747     | 0.979728     | -0.00772285     | 0.0496862            |"
+      }
+    ]
+  },
+  "DATASET_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value",
+    "ocean_proximity"
+  ],
+  "NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "BOOLEAN_COLUMNS": [],
+  "ORIGINAL_NUMERIC_COLUMNS": [
+    "longitude",
+    "latitude",
+    "housing_median_age",
+    "total_rooms",
+    "total_bedrooms",
+    "population",
+    "households",
+    "median_income",
+    "median_house_value"
+  ],
+  "ORIGINAL_CATEGORICAL_COLUMNS": [
+    "ocean_proximity"
+  ],
+  "DATASET_SHAPE": [
+    20640,
+    10
+  ],
+  "df_raw_saved": true,
+  "df_clean_saved": true,
+  "df_features_saved": false
+}

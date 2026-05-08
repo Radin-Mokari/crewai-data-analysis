@@ -1,6 +1,4 @@
-# ============================================================================
-# COMPLETE CREWAI DATA ANALYSIS WORKFLOW (STATEFUL, TOKEN-OPTIMIZED)
-# ============================================================================
+# CrewAI Data Analysis Workflow
 
 import os
 import re
@@ -24,15 +22,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 def count_tokens(text: str, model: str = "gpt-4o") -> int:
-    """Estimate token count for a given text using tiktoken. Safe if library is missing."""
+    """Token count via tiktoken; returns 0 if library is missing."""
     if not text or tiktoken is None:
         return 0
     try:
-        # Use o200k_base for gpt-4o/o1 models, cl100k_base for gpt-4/3.5
         encoding = tiktoken.encoding_for_model(model)
         return len(encoding.encode(text))
     except Exception:
-        # Fallback to cl100k_base if model name is unknown
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
             return len(encoding.encode(text))
@@ -56,13 +52,7 @@ def _emit_log(
     message: str = "",
     **extra: Any,
 ) -> None:
-    """Emit an infrastructure log event over the SSE stream.
-
-    Intentionally carries no inputs/outputs/reasoning-content — only the fact
-    that an operation started / finished / failed. Used to feed the Logs
-    sidebar in the UI; chain-of-thoughts is emitted via the existing event
-    types (manager_decision, specialist_*, etc.).
-    """
+    """Emit an infrastructure log event (level/category/event) over SSE."""
     if emit is None:
         return
     try:
@@ -78,13 +68,12 @@ def _emit_log(
         if extra:
             for k, v in extra.items():
                 try:
-                    # Deep copy and ensure serializable
+
                     payload[k] = json.loads(json.dumps(v))
                 except:
                     payload[k] = str(v)
         emit(payload)
     except Exception as e:
-        # Don't crash the entire loop if one log fails
         print(f"[LOG_EMIT_ERROR] {e}")
 
 
@@ -118,20 +107,10 @@ SupervisorSingleTurnOutcome = Literal[
 ]
 
 
-# ============================================================================
-# PART 1: STATEFUL PYTHON SESSION TOOL
-# ============================================================================
+# --- Stateful Python Session Tool ---
 
 class PythonSessionTool(BaseTool):
-    """
-    Long-lived, in-process Python execution environment.
-
-    Key properties:
-    - Single interpreter, shared globals between calls.
-    - Dataset loaded once into df_raw, later steps use df_clean, df_features, etc.
-    - Lightweight state validation helpers.
-    - Returns structured JSON: stdout, success, charts, error, state_flags.
-    """
+    """Shared in-process Python kernel. All agents execute code here."""
 
     name: str = "python_stateful_executor"
     description: str = (
@@ -148,15 +127,13 @@ class PythonSessionTool(BaseTool):
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         self._init_base_session()
 
-    # ------------------------------------------------------------------ #
-    # Session & state helpers
-    # ------------------------------------------------------------------ #
+
     def _init_base_session(self):
-        """Initialize shared session globals."""
+        """Seed session_globals with libraries and chart config."""
         chart_output_dir = Path(self.output_dir).resolve()
         chart_output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Intercept savefig to force output to our charts directory
+
         original_savefig = plt.savefig
         def wrapped_savefig(fname, *args, **kwargs):
             fname_path = Path(fname)
@@ -185,7 +162,7 @@ class PythonSessionTool(BaseTool):
         self.session_globals = base_globals
 
     def init_session(self, dataset_path: str):
-        """Load dataset and inject metadata for Core Mode."""
+        """Load CSV and inject Core Mode metadata (columns, dtypes, etc.)."""
         code = f"""
 import pandas as _pd
 import numpy as _np
@@ -196,8 +173,7 @@ df_clean = None
 df_features = None
 validation_report = {{}}  # dict: structured checks (string keys); optional notes list via key "messages"
 
-# === CORE MODE METADATA ===
-# These variables provide dynamic column awareness for all agents
+# Core Mode metadata
 DATASET_COLUMNS = list(df_raw.columns)
 NUMERIC_COLUMNS = df_raw.select_dtypes(include=[_np.number]).columns.tolist()
 CATEGORICAL_COLUMNS = df_raw.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
@@ -206,12 +182,11 @@ DATASET_SHAPE = df_raw.shape
 DATASET_PATH = dataset_path
 TIME_INDEX_OK = False
 
-# === PRESERVE ORIGINAL COLUMNS (before any transformations) ===
-# These are used by visualization agent for interpretable charts
+# Preserve original columns for visualization agent
 ORIGINAL_NUMERIC_COLUMNS = NUMERIC_COLUMNS.copy()
 ORIGINAL_CATEGORICAL_COLUMNS = CATEGORICAL_COLUMNS.copy()
 
-# Print metadata summary for agents to reference
+
 print("=== CORE MODE: Dataset Metadata ===")
 print(f"Shape: {{DATASET_SHAPE[0]}} rows x {{DATASET_SHAPE[1]}} columns")
 print(f"All columns: {{DATASET_COLUMNS}}")
@@ -219,7 +194,7 @@ print(f"Numeric columns ({{len(NUMERIC_COLUMNS)}}): {{NUMERIC_COLUMNS}}")
 print(f"Categorical columns ({{len(CATEGORICAL_COLUMNS)}}): {{CATEGORICAL_COLUMNS}}")
 print("===================================")
 
-# === STATE VALIDATION HELPER ===
+
 def validate_core_state():
     '''Call at start of each task to verify state is ready.'''
     g = globals()
@@ -252,7 +227,7 @@ def validate_core_state():
 
 
     def _run(self, code: str) -> str:
-        """Execute Python code and return JSON with stdout, charts, state_flags."""
+        """Execute code in the shared session; return JSON with stdout, charts, errors."""
         result = {
             "success": False,
             "stdout": "",
@@ -273,10 +248,10 @@ def validate_core_state():
         stdout_buffer = io.StringIO()
         _original_close = plt.close
         
-        # Ensure a clean state before starting
+
         plt.close('all')
         
-        # Disable plt.close during execution so we can capture all figures at the end
+        # Disable plt.close during exec to capture all figures at the end
         plt.close = lambda *args, **kwargs: None
 
         try:
@@ -304,12 +279,12 @@ def validate_core_state():
         charts = []
         existing_hashes = set()
 
-        # Restore original close for cleanup
+
         plt.close = _original_close
 
         for fig_num in plt.get_fignums():
             fig = plt.figure(fig_num)
-            # Capture figure to buffer to check for duplicates
+
             buf = io.BytesIO()
             fig.savefig(buf, format='png', dpi=100, bbox_inches="tight")
             img_data = buf.getvalue()
@@ -322,14 +297,14 @@ def validate_core_state():
                     f.write(img_data)
                 charts.append(str(chart_path))
 
-        # Final aggressive cleanup
+
         plt.close('all')
 
         result["charts"] = charts
 
         result["state_flags"] = self.validate_state()
 
-        # Fix Rich stdout corruption after redirect
+
         import sys
         if hasattr(sys, '__stdout__') and sys.__stdout__ is not None:
             sys.stdout = sys.__stdout__
@@ -337,9 +312,7 @@ def validate_core_state():
         return json.dumps(result)
 
 
-# ============================================================================
-# PART 2: LLM CONFIG
-# ============================================================================
+# --- LLM Config ---
 
 def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
     from crewai import LLM
@@ -353,9 +326,7 @@ def _make_gemini_llm(max_output_tokens: int, thinking_budget: int = 0):
     )
 
 
-# ============================================================================
-# PART 3: AGENT DEFINITIONS (STATE-AWARE)
-# ============================================================================
+# --- Sequential Agent Definitions ---
 
 def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
     llm_short = _make_gemini_llm(max_output_tokens=320, thinking_budget=0)
@@ -528,9 +499,7 @@ def create_agents(executor_tool: PythonSessionTool) -> Dict[str, Agent]:
     return agents
 
 
-# ============================================================================
-# PART 4: TASK DEFINITIONS (NO RELOADING, STATEFUL)
-# ============================================================================
+# --- Sequential Task Definitions ---
 
 def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
     core_mode_prefix = "CORE MODE: Use existing df_raw, NUMERIC_COLUMNS, CATEGORICAL_COLUMNS.\n\n"
@@ -749,7 +718,7 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
         ),
     }
 
-    # Explicit context ordering to encourage stateful reasoning
+    # Task context chain (sequential ordering)
     tasks["data_loading"].context = [tasks["library_import"]]
     tasks["data_inspection"].context = [tasks["data_loading"]]
     tasks["data_validation"].context = [tasks["data_inspection"]]
@@ -762,9 +731,7 @@ def create_tasks(agents: Dict[str, Agent]) -> Dict[str, Task]:
     return tasks
 
 
-# ============================================================================
-# PART 4B: DYNAMIC SUPERVISOR (brief, specialists, manager JSON, chat persist)
-# ============================================================================
+# --- Dynamic Supervisor Mode ---
 
 DYNAMIC_CORE_MODE = (
     "You operate in CORE MODE within a persistent Python kernel. "
@@ -1422,12 +1389,10 @@ REPORTER_GROUNDING_RULES = (
 )
 
 
-# ============================================================================
-# PART 5: WORKFLOW ORCHESTRATION WITH RETRIES
-# ============================================================================
+# --- Workflow Orchestration ---
 
 class DataAnalysisWorkflow:
-    """Main workflow controller for sequential data analysis pipeline."""
+    """Main workflow controller. Handles both sequential and dynamic modes."""
 
     def __init__(
         self,
@@ -1491,7 +1456,7 @@ class DataAnalysisWorkflow:
         self.results: Dict[str, Any] = {}
         self.charts: List[Path] = []
         self.report_path: Optional[Path] = None
-        # Latest user intent for manager payload (stdin / HTTP); falls back to env batch prompt when empty.
+
         self.session_user_goal: str = ""
         self._dynamic_bootstrapped: bool = False
         self._last_manager_reply: str = ""
@@ -1959,7 +1924,7 @@ class DataAnalysisWorkflow:
                 "Pick a different next_agent, narrow the instruction, use CHAT to explain, or DONE if satisfied.\n"
             )
         
-        # Trace input tokens (resilient)
+
         in_tokens = count_tokens(user_payload) + count_tokens(chat_block) + count_tokens(system_instruction)
         _emit_log(emit, "info", "manager", "thinking", "Manager consulting LLM for next decision", tokens=in_tokens)
         try:
@@ -1968,7 +1933,7 @@ class DataAnalysisWorkflow:
                 user_payload=user_payload,
                 system_instruction=system_instruction,
             )
-            # Trace output tokens (resilient)
+    
             out_tokens = count_tokens(decision.model_dump_json())
             _emit_log(emit, "info", "manager", "decision_received", f"Decision: {decision.next_agent}", tokens=out_tokens)
         except Exception as _mgr_exc:
@@ -2389,7 +2354,7 @@ class DataAnalysisWorkflow:
         extra_inputs = extra_inputs or {}
         total_attempts = max_retries + 1
 
-        # Route tool invocation logs through emit during this task run.
+
         prev_tool_emit = self.executor.session_globals.get("_log_emit")
         self.executor.session_globals["_log_emit"] = emit
         try:
@@ -2410,9 +2375,9 @@ class DataAnalysisWorkflow:
                         )
                     def _step_callback(step_output):
                         try:
-                            # step_output could be an AgentStep or a tuple, depending on action
+                    
                             log_text = getattr(step_output, 'log', None) or str(step_output)
-                            # Clean up and truncate the log for the UI
+                
                             msg = log_text.replace('\n', ' ').strip()
                             if len(msg) > 500:
                                 msg = msg[:497] + "..."
@@ -2434,13 +2399,13 @@ class DataAnalysisWorkflow:
                         step_callback=_step_callback,
                     )
                     
-                    # Trace input tokens (resilient)
+        
                     in_tokens = count_tokens(task.description)
                     _emit_log(emit, "info", "task", "start", f"Starting task {task_key}", tokens=in_tokens)
                     
                     result = single_crew.kickoff(inputs=extra_inputs)
                     
-                    # Trace output tokens (resilient)
+        
                     out_tokens = count_tokens(str(result))
                     _emit_log(emit, "info", "task", "complete", f"Task {task_key} complete", tokens=out_tokens)
                     self.results[task_key] = str(result)
@@ -2489,7 +2454,7 @@ class DataAnalysisWorkflow:
         print("LLM: Gemini 2.5 Flash (token-optimized config)")
         print(f"{'='*70}\n")
 
-        # ----- PHASE 1: PREPARATION -----
+
         print("\n" + "="*70)
         print("PHASE 1: SEQUENTIAL DATA PREPARATION PIPELINE")
         print("="*70)
@@ -2526,7 +2491,7 @@ class DataAnalysisWorkflow:
         print("\n[RATE LIMITING] Waiting 8 seconds between phases...")
         time.sleep(8)
 
-        # ----- PHASE 2: ANALYSIS -----
+
         print("\n" + "="*70)
         print("PHASE 2: SEQUENTIAL ANALYSIS GROUP")
         print("="*70)
@@ -2560,7 +2525,7 @@ class DataAnalysisWorkflow:
         print("\n[RATE LIMITING] Waiting 6 seconds before final report...")
         time.sleep(6)
 
-        # ----- PHASE 3: REPORT GENERATION (MARKDOWN) -----
+
         print("\n" + "="*70)
         print("PHASE 3: REPORT GENERATION (MARKDOWN)")
         print("="*70)
@@ -2755,9 +2720,7 @@ class DataAnalysisWorkflow:
         return self.generate_markdown_report()
 
 
-# ============================================================================
-# PART 6: SAMPLE DATA + MAIN (UNCHANGED API)
-# ============================================================================
+# --- Sample Data & Main ---
 
 def create_sample_dataset(path: str):
     np.random.seed(42)

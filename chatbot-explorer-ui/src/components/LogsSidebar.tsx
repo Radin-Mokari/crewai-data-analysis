@@ -230,10 +230,7 @@ const LogsSidebar = ({ logs, onClear }: LogsSidebarProps) => {
         )}
       </div>
 
-      {/* Footer */}
-      <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground/80">
-        Infrastructure-only — agent decisions/outputs appear in the main chain-of-thoughts panel.
-      </div>
+
     </div>
   );
 };

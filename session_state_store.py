@@ -1,9 +1,4 @@
-"""
-Persist / restore PythonSessionTool kernel state (DataFrames + metadata) for resume.
-
-Writes under run_output_dir/kernel_snapshot/: meta.json + optional df_*.parquet.
-Requires pyarrow for Parquet (see requirements.txt).
-"""
+"""Kernel snapshot save/load for session resume (Parquet + meta.json)."""
 
 from __future__ import annotations
 
@@ -19,7 +14,7 @@ KERNEL_SNAPSHOT_SUBDIR = "kernel_snapshot"
 
 
 def _make_json_serializable(obj: Any) -> Any:
-    """Recursively convert numpy/pandas scalars and nested structures for json.dumps."""
+    """Make nested structures JSON-serializable (handles numpy/pandas types)."""
     if obj is None:
         return None
     if isinstance(obj, bool):
@@ -82,7 +77,7 @@ def _snapshot_enabled() -> bool:
 
 
 def save_kernel_snapshot(executor: Any, run_dir: Path) -> None:
-    """Persist df_raw / df_clean / df_features and JSON-serializable globals into kernel_snapshot/."""
+    """Save df_raw/df_clean/df_features and metadata to kernel_snapshot/."""
     if not _snapshot_enabled():
         return
 
@@ -140,7 +135,7 @@ def save_kernel_snapshot(executor: Any, run_dir: Path) -> None:
 
 
 def try_load_kernel_snapshot(executor: Any, run_dir: Path) -> bool:
-    """If kernel_snapshot/meta.json exists, hydrate session_globals. Returns True if loaded."""
+    """Restore session_globals from kernel_snapshot/. Returns True if loaded."""
     snap = kernel_snapshot_dir(run_dir)
     meta_path = snap / "meta.json"
     if not meta_path.is_file():

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No-LLM smoke test: load CSV, init session, write dataset_brief.txt ."""
+"""Smoke test: load CSV and write dataset_brief.txt (no LLM calls)."""
 
 import sys
 from pathlib import Path
