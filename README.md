@@ -4,10 +4,9 @@ A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic s
 
 ## Demo
 
-<video width="100%" controls>
-  <source src="docs/demo_compressed.MP4" type="video/mp4">
-  Your browser does not support the video tag.
-</video>
+[![CrewAI Data Analysis Demo](https://img.youtube.com/vi/AJJledMeV-U/maxresdefault.jpg)](https://youtu.be/AJJledMeV-U?si=4HDMmDNi0lEaxMUi)
+
+[Watch on YouTube](https://youtu.be/AJJledMeV-U?si=4HDMmDNi0lEaxMUi)
 
 ## Features
 
