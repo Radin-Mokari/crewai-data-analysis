@@ -2,21 +2,28 @@
 
 A multi-agent data analysis workflow using CrewAI and Google Gemini: **dynamic supervisor mode** (JSON routing over a shared Python kernel) or **sequential** legacy pipeline.
 
+## Demo
+
+<video width="100%" controls>
+  <source src="docs/demo_compressed.MP4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
+
 ## Features
 
 - **Multi-agent architecture**
-  - **Dynamic mode** (default): Gemini **supervisor** + **7 specialists** (cleaning, feature engineering, class imbalance, EDA, visualization, statistics, reporter) plus routing outcomes **CHAT** / **DONE**; all share one **stateful Python session** (`python_stateful_executor`).
+  - **Dynamic mode** (default): Gemini **supervisor** + **7 specialists** (cleaning, feature engineering, class imbalance, EDA, visualization, statistics, reporter) plus routing outcomes **CHAT** / **DONE**.
   - **Sequential mode** (`WORKFLOW_MODE=sequential`): **10 phase agents** in fixed order (load → inspect → validate → clean → transform → EDA → visualize → statistics → report).
 - **Persisted supervisor chat**: `manager_chat.jsonl` per run; long threads summarized when over `MANAGER_CHAT_BUDGET_CHARS` → optional `conversation_summary.txt`.
 - **`chat_turn` rows**: Extra JSONL entries for CHAT replies (omitted from the manager prompt block to avoid duplicating assistant JSON).
 - **Deterministic dataset brief**: `dataset_brief.txt` per run (time-series heuristics when applicable).
 - **Kernel snapshots**: After each specialist step, optional `kernel_snapshot/` (Parquet + `meta.json`) for resume; `SESSION_SNAPSHOT=0` disables. Requires **pyarrow** (see `requirements.txt`).
-- **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`). **Interactive-first** (default): no automatic batch before stdin — your first line sets the goal (narrow asks like “only EDA” or “only plots” are routed by the supervisor). **Batch-first**: set `AUTO_RUN_SUPERVISOR=1` or `--batch-first` to run a full supervisor batch from `USER_ANALYSIS_PROMPT` before stdin (legacy). Use `--no-interactive` or `INTERACTIVE_SESSION=0` to skip stdin entirely. **Sequential** mode does not use this loop.
+- **Interactive supervisor (CLI)**: With **dynamic** mode, **`python run.py` keeps stdin open** so you can talk to the manager in the **same process/kernel** (`/report`, `exit` / `quit` / `q`).
 - **Local HTTP API** (optional): `server.py` + Uvicorn — same rules as CLI; see [Usage](#usage).
 - **Web UI** (optional): `chatbot-explorer-ui/` — Vite + React chat shell that calls the same API (`/chat`, `/report`, `/pipeline`, `/health`); see [Web UI (chatbot-explorer-ui)](#web-ui-chatbot-explorer-ui).
 - **Core mode prompting**: Dynamic columns (`DATASET_COLUMNS`, `NUMERIC_COLUMNS`, `CATEGORICAL_COLUMNS`); no hardcoded column names.
 - **Codified prompting**: Analysis agents plan (pseudocode) before executing; inspector-style retries on errors.
-- **Step delays & retries**: Configurable pause between supervisor turns (`DYNAMIC_STEP_DELAY_SECONDS`); task retries with backoff in code — not a separate “API rate limiter,” but reduces burst load on the LLM.
+- **Step delays & retries**: Configurable pause between supervisor turns (`DYNAMIC_STEP_DELAY_SECONDS`); task retries with backoff in code — not a separate "API rate limiter," but reduces burst requests.
 - **Real-time Streaming Observability**: High-performance `asyncio` streaming pipeline for logs and Chain-of-Thought events. Uses packet padding and explicit flushing to ensure immediate UI updates.
 - **Token Usage Tracing**: Precise real-time token tracking using **Tiktoken** (with resilient fallback). Token usage badges are displayed directly in the UI workflow logs.
 - **Concurrency Stabilization**: Global execution locks to prevent background thread contention and GIL starvation during long-running agent workflows.
@@ -114,7 +121,7 @@ USER_ANALYSIS_PROMPT=Your analysis goals in plain language
 python run.py
 ```
 
-**Dynamic mode (default):** **Interactive-first** — opens the `>` prompt immediately; your first line is the analysis goal (no automatic batch from `USER_ANALYSIS_PROMPT`). For **batch-first** (full run from env, then stdin): `python run.py --batch-first` or `AUTO_RUN_SUPERVISOR=1`, or disable interactive-first with `INTERACTIVE_FIRST=0`. **`--no-interactive`** or **`INTERACTIVE_SESSION=0`** runs one non-interactive batch (when batch-first / not interactive-first) or exits after setup.
+**Dynamic mode (default):** **Interactive-first** — opens the `>` prompt immediately; your first line is the analysis goal (no automatic batch from `USER_ANALYSIS_PROMPT`). For **batch-first** (full supervisor run from env), use `--batch-first` or set `AUTO_RUN_SUPERVISOR=1`.
 
 CLI overrides (optional):
 
@@ -139,8 +146,8 @@ uvicorn server:app --host 127.0.0.1 --port 8765
 - `GET /artifacts/{run_id}/charts/{filename}.png` — serve a chart from `OUTPUT_DIR/run_{run_id}/charts/` (path-safe; same folder the Python session writes to)
 - `GET /artifacts/{run_id}/report` — raw `analysis_report_{run_id}.md` if present (`text/markdown`)
 - `POST /pipeline` — one dynamic batch (`skip_terminal_reporter`); resets HTTP interactive state for a fresh chat session
-- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text). Response includes **`lines`** (manager log), plus **`specialist_steps`** (new `{agent, excerpt}` entries this turn) and **`chart_urls`** (paths like `/artifacts/{run_id}/charts/....png` for the web UI to resolve under `/api`). Excerpt length capped by **`CHAT_EXCERPT_MAX_CHARS`** (default 4000).
-- `POST /report` — terminal-style reporter + save report; response includes **`report_markdown`** (file contents, capped by **`REPORT_MARKDOWN_MAX_CHARS`**, default 200000) and **`truncated`** when capped
+- `POST /chat` — `{"message": "..."}`; optional `user_prompt` (falls back to `USER_ANALYSIS_PROMPT` or the message text). Response includes **`lines`** (manager log), plus **`specialist_steps`** (nested Crew outputs).
+- `POST /report` — terminal-style reporter + save report; response includes **`report_markdown`** (file contents, capped by **`REPORT_MARKDOWN_MAX_CHARS`**, default 200000) and **`truncated`** when exceeded.
 - `POST /reset` — rebuild workflow; optional `{"resume_run_dir": "..."}`
 
 **CORS:** The server allows browser clients from common local Vite origins (port 8080) by default. Override with comma-separated **`CORS_ORIGINS`** in `.env` if you use another URL.
@@ -149,7 +156,7 @@ With **`WORKFLOW_MODE=dynamic`**, the supervisor chooses specialists using JSON 
 
 ### Web UI (chatbot-explorer-ui)
 
-React + TypeScript app in **`chatbot-explorer-ui/`**. In development it proxies **`/api/*`** → `http://127.0.0.1:8765/*` (see `vite.config.ts`). The UI calls `GET /health`, `POST /chat`, `POST /report` (Reporter action chip), and **`POST /pipeline`** via the header **Full batch** button (entire dynamic supervisor loop until DONE or step limit).
+React + TypeScript app in **`chatbot-explorer-ui/`**. In development it proxies **`/api/*`** → `http://127.0.0.1:8765/*` (see `vite.config.ts`). The UI calls `GET /health`, `POST /chat`, `POST /report`, and `POST /pipeline`.
 
 **Two terminals:**
 
@@ -171,7 +178,7 @@ Open the URL Vite prints (default **http://localhost:8080**).
 
 **Note on Memory:** If you encounter a "Process out of memory" error during `npm run dev`, the `package.json` includes an automatic fix that increases the Node.js memory limit to 4GB.
 
-**Behavior notes:** The first user message in a sidebar session sets the **`user_prompt`** goal sent on every `/chat` until you start a new chat (client-side sessions only; the server keeps one workflow). **Full batch** sends that goal to **`POST /pipeline`**; if you have not set a session goal yet, the server falls back to **`USER_ANALYSIS_PROMPT`** in `.env` (or returns 400). The **Reporter** chip triggers **`POST /report`** instead of chat; the UI renders **`report_markdown`** when returned. Normal chat replies show manager **`lines`**, specialist excerpts, and chart images via **`chart_urls`** (loaded through the dev proxy as `/api/artifacts/...`). After a full batch, the server resets HTTP interactive state (same as API docs). Requests can take a long time while CrewAI runs; controls are disabled until the response returns.
+**Behavior notes:** The first user message in a sidebar session sets the **`user_prompt`** goal sent on every `/chat` until you start a new chat (client-side sessions only; the server keeps one workflow instance across all HTTP clients).
 
 **Pipeline flow (summary):**
 
@@ -213,6 +220,8 @@ Chart files use **timestamped names**, not fixed `chart_1.png`.
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
+├── docs/
+│   └── demo_compressed.MP4   # Demo video
 └── analysis_results/         # Created on run (gitignored if configured)
 ```
 
